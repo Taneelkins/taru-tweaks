@@ -70,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Capture.shared.registerKeys()
         HotKeys.shared.start()
         MenuBarManager.shared.start()
+        TaruBar.shared.start()
         Responsiveness.shared.start()
         updateDockIcon()
         for sig in [SIGTERM, SIGINT] {
@@ -136,7 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                      "selectedTitle": sw.windows.indices.contains(sw.selected) ? "\(sw.windows[sw.selected].appName) | \(sw.windows[sw.selected].title)" : "",
                                      "front": NSWorkspace.shared.frontmostApplication?.localizedName ?? "",
                                      "native1": SkyLight.hotKeyValue(1), "native27": SkyLight.hotKeyEnabled(27),
-                                     "dockPreset": DockPresets.shared.activeName, "dockCount": DockPresets.shared.presets.count, "dockShown": TaruDock.shared.shown, "wpPlaying": Wallpaper.shared.playing, "wpCurrent": Wallpaper.shared.current, "dockFrame": NSStringFromRect(TaruDock.shared.panel.frame), "xdrOn": Brightness.shared.on, "xdrFactor": Brightness.shared.factor, "xdrNote": Brightness.shared.note]
+                                     "dockPreset": DockPresets.shared.activeName, "dockCount": DockPresets.shared.presets.count, "dockShown": TaruDock.shared.shown, "wpPlaying": Wallpaper.shared.playing, "barIcons": TaruBarModel.shared.icons.map { "\($0.appName)|\($0.label)|\($0.image != nil)" }, "barPinned": TaruBarModel.shared.pinned.map(\.label), "barCPU": TaruBarModel.shared.cpu.last ?? -1, "barTemp": TaruBarModel.shared.temperature ?? -999, "wpCurrent": Wallpaper.shared.current, "dockFrame": NSStringFromRect(TaruDock.shared.panel.frame), "xdrOn": Brightness.shared.on, "xdrFactor": Brightness.shared.factor, "xdrNote": Brightness.shared.note]
             if let d = try? JSONSerialization.data(withJSONObject: st, options: .prettyPrinted) { try? d.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-state.json")) }
         }
         dc.addObserver(forName: .init("com.taru.tweaks.notifytest"), object: nil, queue: .main) { _ in
@@ -172,7 +173,7 @@ final class Nav: ObservableObject { @Published var page = "general" }
 struct SettingsRoot: View {
     @EnvironmentObject var nav: Nav
     let groups = [
-        SidebarGroup(id: "Taru Tweaks", items: [SidebarItem(id: "general", title: "General", icon: "square.grid.2x2"), SidebarItem(id: "menubar", title: "Menu Bar", icon: "menubar.rectangle"), SidebarItem(id: "theme", title: "Theme", icon: "paintpalette")]),
+        SidebarGroup(id: "Taru Tweaks", items: [SidebarItem(id: "general", title: "General", icon: "square.grid.2x2"), SidebarItem(id: "bar", title: "Taru Bar", icon: "menubar.arrow.up.rectangle"), SidebarItem(id: "menubar", title: "Menu Bar", icon: "menubar.rectangle"), SidebarItem(id: "theme", title: "Theme", icon: "paintpalette")]),
         SidebarGroup(id: "Windows", items: [SidebarItem(id: "switcher.shortcuts", title: "Switcher", icon: "rectangle.on.rectangle"), SidebarItem(id: "switcher.appearance", title: "Look", icon: "square.grid.3x2"),
                                            SidebarItem(id: "switcher.controls", title: "Controls", icon: "keyboard"), SidebarItem(id: "switcher.exceptions", title: "Exceptions", icon: "nosign"),
                                            SidebarItem(id: "desktop", title: "Desktop", icon: "menubar.dock.rectangle"), SidebarItem(id: "dock", title: "Taru Dock", icon: "dock.rectangle")]),
@@ -186,6 +187,7 @@ struct SettingsRoot: View {
             switch page {
             case "general": GeneralPage()
             case "menubar": MenuBarSettings()
+            case "bar": TaruBarSettings()
             case "theme": VStack(alignment: .leading, spacing: 0) { PageTitle(title: "Theme", subtitle: "One accent color for every module."); ThemePicker() }
             case let p where p.hasPrefix("switcher") || p == "desktop": SwitcherSettings(page: p)
             case let p where p.hasPrefix("battery"): BatterySettings(page: p)
