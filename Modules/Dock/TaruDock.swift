@@ -822,11 +822,11 @@ final class DockView: NSView, NSPopoverDelegate {
         let order = WindowEngine.shared.mru
         let sorted = wins.sorted { (order.firstIndex(of: $0.id) ?? Int.max) < (order.firstIndex(of: $1.id) ?? Int.max) }
         let picker = WindowPickerModel(wins: sorted)
-        present(WindowPicker(model: picker) { [weak self] w in
+        present(WindowPicker(model: picker, pick: { [weak self] w in
             self?.popup?.dismiss()
             NSRunningApplication(processIdentifier: w.pid)?.activate(options: [.activateAllWindows])
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { WindowEngine.shared.focus(w) }
-        }, from: t)
+        }, onEmpty: { [weak self] in self?.popup?.dismiss() }), from: t)
         hoverPopup = hovering
         popupTile = t
         if hovering { watchHoverPopup() }
@@ -1101,6 +1101,14 @@ final class WindowPickerModel: ObservableObject {
 struct WindowPicker: View {
     @ObservedObject var model: WindowPickerModel
     let pick: (Win) -> Void
+    var onEmpty: () -> Void = {}
+
+    private func close(_ w: Win) {
+        NSRunningApplication(processIdentifier: w.pid)?.forceTerminate()
+        model.wins.removeAll { $0.pid == w.pid }
+        hover = nil
+        if model.wins.isEmpty { onEmpty() }
+    }
     @State private var hover: CGWindowID?
     @ObservedObject var theme = Theme.shared
 
@@ -1119,14 +1127,25 @@ struct WindowPicker: View {
                         }
                         .frame(width: 180, height: 112)
                         .overlay(Rectangle().stroke(hover == w.id ? theme.accent : Palette.rule, lineWidth: hover == w.id ? 2 : 1))
+                        .overlay(alignment: .topTrailing) {
+                            if hover == w.id {
+                                Button { close(w) } label: {
+                                    Image(systemName: "xmark").font(.system(size: 10, weight: .heavy))
+                                        .foregroundStyle(Color.black).frame(width: 20, height: 20).background(theme.accent)
+                                }
+                                .buttonStyle(.plain).help(model.wins.filter { $0.pid == w.pid }.count > 1 ? "Force quit (closes all \(model.wins.filter { $0.pid == w.pid }.count) windows of this app)" : "Force quit").padding(5)
+                            }
+                        }
                         Text(w.title.isEmpty ? w.appName : w.title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Palette.bone)
                             .lineLimit(1).frame(width: 180, alignment: .leading)
                     }
                 }
                 .buttonStyle(.plain)
                 .onHover { hover = $0 ? w.id : (hover == w.id ? nil : hover) }
+                .transition(.scale(scale: 0.8).combined(with: .opacity))
             }
         }
+        .animation(.spring(response: 0.28, dampingFraction: 0.85), value: model.wins.map(\.id))
         .padding(12)
         .background(Palette.pit)
     }
