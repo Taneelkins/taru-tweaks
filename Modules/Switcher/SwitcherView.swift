@@ -70,12 +70,26 @@ struct SwitcherView: View {
             } else if s.grouping {
                 let groups = AppGroup.make(s.windows)
                 let active = groups.first { g in g.items.contains { $0.0 == s.selected } }
-                let visible = groups.count + max(0, (active?.items.count ?? 1) - 1)
-                let gw = Self.groupedWidth(visible: visible, expanded: active?.items.count ?? 1, screen: s.targetScreen.visibleFrame, prefs: prefs)
-                FlowLayout(spacing: 12, maxWidth: width * prefs.maxWidth - 40) {
+                let gw = Self.groupedWidth(visible: groups.count, expanded: 1, screen: s.targetScreen.visibleFrame, prefs: prefs)
+                let maxW = width * prefs.maxWidth - 40
+                FlowLayout(spacing: 12, maxWidth: maxW) {
                     ForEach(groups) { g in GroupCard(group: g, width: gw) }
                 }
-                .animation(.spring(response: 0.3, dampingFraction: 0.84), value: s.selected)
+                .overlayPreferenceValue(ActiveGroupKey.self) { anchor in
+                    GeometryReader { geo in
+                        if let anchor, let g = active, g.items.count > 1 {
+                            let r = geo[anchor]
+                            let n = CGFloat(g.items.count)
+                            let fw = max(110, min(gw, (geo.size.width - 24 - (n - 1) * 10) / n - 16))
+                            let stripW = n * (fw + 16) + (n - 1) * 10 + 20
+                            FanStrip(group: g, width: fw)
+                                .position(x: min(max(r.midX, stripW / 2), geo.size.width - stripW / 2), y: r.midY)
+                                .transition(.scale(scale: 0.9).combined(with: .opacity))
+                                .id(g.id)
+                        }
+                    }
+                }
+                .animation(.spring(response: 0.26, dampingFraction: 0.86), value: active?.id)
             } else {
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(tw + 16), spacing: 10), count: cols), alignment: .leading, spacing: 10) {
                     ForEach(Array(s.windows.enumerated()), id: \.element.id) { i, w in
@@ -241,22 +255,13 @@ struct GroupCard: View {
                         .background(active ? theme.accent : Color.white.opacity(0.08))
                 }
             }
-            if active && group.items.count > 1 {
-                HStack(alignment: .top, spacing: 10) {
-                    ForEach(group.items, id: \.1.id) { i, w in
-                        Tile(win: w, index: i, selected: i == s.selected, width: width)
-                            .matchedGeometryEffect(id: w.id, in: ns)
-                            .transition(.scale(scale: 0.85, anchor: .leading).combined(with: .opacity))
-                    }
-                }
-            } else {
-                stack
-            }
+            stack
         }
         .padding(10)
         .background(active ? theme.accent.opacity(0.07) : Color.clear)
         .overlay(Rectangle().stroke(active ? theme.accent.opacity(0.55) : Color.white.opacity(0.05), lineWidth: 1))
         .opacity(active || s.selected < 0 ? 1 : 0.8)
+        .anchorPreference(key: ActiveGroupKey.self, value: .bounds) { active ? $0 : nil }
     }
 
     @ViewBuilder var stack: some View {
@@ -270,7 +275,6 @@ struct GroupCard: View {
             }
             Tile(win: top.1, index: top.0, selected: top.0 == s.selected, width: width)
                 .background(Color(red: 0.03, green: 0.012, blue: 0.012))
-                .matchedGeometryEffect(id: top.1.id, in: ns)
         }
         .padding(.top, group.items.count > 1 ? CGFloat(min(group.items.count - 1, 2)) * 6 : 0)
         .padding(.trailing, group.items.count > 1 ? CGFloat(min(group.items.count - 1, 2)) * 7 : 0)
@@ -315,5 +319,29 @@ struct FlowLayout: Layout {
         }
         if !cur.isEmpty { rows.append((cur, w, h)) }
         return rows
+    }
+}
+
+struct ActiveGroupKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>?
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) { value = value ?? nextValue() }
+}
+
+struct FanStrip: View {
+    let group: AppGroup
+    let width: CGFloat
+    @EnvironmentObject var s: Switcher
+    @ObservedObject var theme = Theme.shared
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ForEach(group.items, id: \.1.id) { i, w in
+                Tile(win: w, index: i, selected: i == s.selected, width: width)
+            }
+        }
+        .padding(10)
+        .background(Color(red: 0.035, green: 0.012, blue: 0.012))
+        .overlay(Rectangle().stroke(theme.accent.opacity(0.75), lineWidth: 1))
+        .shadow(color: .black.opacity(0.75), radius: 18)
+        .fixedSize()
     }
 }

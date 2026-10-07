@@ -106,11 +106,10 @@ final class Switcher: ObservableObject {
     func step(_ d: Int) {
         guard !windows.isEmpty else { return }
         selected = (selected + d + windows.count) % windows.count
-        if grouping && shown { layout(); DispatchQueue.main.async { self.layout() } }
         updateOutline()
     }
 
-    func select(_ i: Int) { guard windows.indices.contains(i) else { return }; selected = i; if grouping && shown { layout(); DispatchQueue.main.async { self.layout() } }; updateOutline() }
+    func select(_ i: Int) { guard windows.indices.contains(i) else { return }; selected = i; updateOutline() }
 
     func released() {
         guard let sc = shortcut else { commit(); return }
