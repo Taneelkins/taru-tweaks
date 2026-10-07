@@ -1103,9 +1103,41 @@ struct StackView: View {
 
 final class WindowPickerModel: ObservableObject {
     @Published var wins: [Win]
+    @Published var children: [CGWindowID: [Win]] = [:]
     @Published var thumbs: [CGWindowID: CGImage] = [:]
-    init(wins: [Win]) { self.wins = wins; reload() }
-    func reload() { thumbs = Dictionary(uniqueKeysWithValues: wins.compactMap { w in Thumbnails.shared.cache[w.id].map { (w.id, $0) } }) }
+    private let everything: [Win]
+
+    init(wins: [Win]) {
+        everything = wins
+        self.wins = []
+        regroup(wins)
+        reload()
+    }
+
+    func regroup(_ list: [Win]) {
+        var parents = list.filter { !$0.dialog }
+        var kids: [CGWindowID: [Win]] = [:]
+        for d in list where d.dialog {
+            let sameApp = parents.filter { $0.pid == d.pid }
+            if let parent = sameApp.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) {
+                kids[parent.id, default: []].append(d)
+            } else {
+                parents.append(d)
+            }
+        }
+        wins = parents
+        children = kids
+    }
+
+    func remove(pid: pid_t) {
+        wins.removeAll { $0.pid == pid }
+        children = children.filter { key, _ in wins.contains { $0.id == key } }
+    }
+
+    func reload() {
+        let all = everything
+        thumbs = Dictionary(uniqueKeysWithValues: all.compactMap { w in Thumbnails.shared.cache[w.id].map { (w.id, $0) } })
+    }
 }
 
 struct WindowPicker: View {
@@ -1115,7 +1147,7 @@ struct WindowPicker: View {
 
     private func close(_ w: Win) {
         NSRunningApplication(processIdentifier: w.pid)?.forceTerminate()
-        model.wins.removeAll { $0.pid == w.pid }
+        model.remove(pid: w.pid)
         hover = nil
         if model.wins.isEmpty { onEmpty() }
     }
@@ -1137,6 +1169,24 @@ struct WindowPicker: View {
                         }
                         .frame(width: 180, height: 112)
                         .overlay(Rectangle().stroke(hover == w.id ? theme.accent : Palette.rule, lineWidth: hover == w.id ? 2 : 1))
+                        .overlay(alignment: .bottomTrailing) {
+                            HStack(spacing: 4) {
+                                ForEach(model.children[w.id] ?? []) { d in
+                                    Button { pick(d) } label: {
+                                        ZStack {
+                                            Rectangle().fill(Color.black)
+                                            if let img = model.thumbs[d.id] { Image(decorative: img, scale: 2).resizable().aspectRatio(contentMode: .fit) }
+                                        }
+                                        .frame(width: 70, height: 46)
+                                        .overlay(Rectangle().stroke(theme.accent, lineWidth: 1.5))
+                                        .shadow(color: .black.opacity(0.7), radius: 4)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help(d.title.isEmpty ? "Dialog" : d.title)
+                                }
+                            }
+                            .padding(6)
+                        }
                         .overlay(alignment: .topTrailing) {
                             if hover == w.id {
                                 Button { close(w) } label: {
@@ -1148,6 +1198,10 @@ struct WindowPicker: View {
                         }
                         Text(w.title.isEmpty ? w.appName : w.title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Palette.bone)
                             .lineLimit(1).frame(width: 180, alignment: .leading)
+                        if let kids = model.children[w.id], !kids.isEmpty {
+                            Text("+ " + kids.map { $0.title.isEmpty ? "Dialog" : $0.title }.joined(separator: ", ")).font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(theme.accent).lineLimit(1).frame(width: 180, alignment: .leading)
+                        }
                     }
                 }
                 .buttonStyle(.plain)

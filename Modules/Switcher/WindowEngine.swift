@@ -18,6 +18,7 @@ struct Win: Identifiable, Equatable {
     var onCurrentSpace = true
     var spaceNumber: Int?
     var windowless = false
+    var dialog = false
     var order = 0
     static func == (a: Win, b: Win) -> Bool { a.id == b.id && a.pid == b.pid && a.title == b.title && a.minimized == b.minimized }
 }
@@ -116,13 +117,13 @@ final class WindowEngine {
         for a in NSWorkspace.shared.runningApplications where (a.activationPolicy == .regular || a.processIdentifier == me) && !skipped.contains(a.bundleIdentifier ?? "") {
             apps[a.processIdentifier] = a
         }
-        var axInfo: [CGWindowID: (minimized: Bool, fullscreen: Bool, title: String, standard: Bool)] = [:]
+        var axInfo: [CGWindowID: (minimized: Bool, fullscreen: Bool, title: String, standard: Bool, dialog: Bool)] = [:]
         for (pid, _) in apps {
             for el in axWindows(pid) {
                 var id: CGWindowID = 0; _ = _AXUIElementGetWindow(el, &id)
                 guard id != 0 else { continue }
                 let sub: String = ax(el, kAXSubroleAttribute) ?? ""
-                axInfo[id] = (ax(el, kAXMinimizedAttribute) ?? false, ax(el, "AXFullScreen") ?? false, ax(el, kAXTitleAttribute) ?? "", sub == kAXStandardWindowSubrole as String || sub == "AXDialog")
+                axInfo[id] = (ax(el, kAXMinimizedAttribute) ?? false, ax(el, "AXFullScreen") ?? false, ax(el, kAXTitleAttribute) ?? "", sub == kAXStandardWindowSubrole as String || sub == "AXDialog", sub == "AXDialog")
             }
         }
         let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
@@ -154,6 +155,7 @@ final class WindowEngine {
             win.order = result.count
             win.minimized = info?.minimized ?? false
             win.fullscreen = info?.fullscreen ?? false
+            win.dialog = info?.dialog ?? false
             win.hidden = app.isHidden
             win.onCurrentSpace = current
             win.spaceNumber = winSpaces.first.flatMap { spaces.index[$0] }
