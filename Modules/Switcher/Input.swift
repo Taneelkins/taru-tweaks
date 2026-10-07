@@ -12,7 +12,7 @@ final class Input {
 
     func start() -> Bool {
         if tap != nil { return true }
-        let types: [CGEventType] = [.keyDown, .keyUp, .flagsChanged, .rightMouseDown, .leftMouseDown]
+        let types: [CGEventType] = [.keyDown, .keyUp, .flagsChanged, .rightMouseDown, .leftMouseDown, .scrollWheel]
         let mask = types.reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) }
         guard let t = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: mask, callback: { _, type, event, _ in
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
@@ -59,6 +59,8 @@ final class Input {
         let s = Switcher.shared
         let prefs = SwitcherPrefs.shared
         let flags = e.flags.rawValue & relevantMods
+
+        if type == .scrollWheel { return !s.visible && DockPresets.shared.scroll(e) }
 
         if type == .rightMouseDown || (type == .leftMouseDown && flags == 0x40000) {
             if prefs.dockForceQuit && !s.visible && overDock(e.location) {

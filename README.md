@@ -6,10 +6,9 @@ Personal macOS utility for a MacBook Pro (M5, macOS 26). One app, one set of per
 |---|---|---|
 | **Switcher** | AltTab Pro | ⌘⇥ window switcher across every Space and fullscreen app, live/remembered previews, 5 shortcuts with per-shortcut filters, search, thumbnails/icons/titles styles, app exceptions, trackpad swipe. macOS's own switcher moves to ⌥⇥. |
 | **Menu Bar** | Ice / Bartender | ‹ toggle + divider: icons left of the divider hide (divider stretches 10,000 pt). ⌃⌥⌘M, auto re-hide, hide on click-away, refuses to collapse if the toggle is on the hidden side. Other apps' icons can be placed by editing their `NSStatusItem Preferred Position <name>` defaults and relaunching them (macOS ignores synthetic ⌘-drags). |
-| **Desktop** | — | ⌘D Show Desktop (minimize all, press again to restore). Dock right-click shows Force Quit. |
+| **Desktop** | — | ⌘D Show Desktop (minimize all, press again to restore). Dock right-click shows Force Quit. Dock Presets: two-finger swipe on the Dock switches between saved Docks (e.g. School); each preset remembers the Dock as you leave it. |
 | **Battery** | AlDente Pro | Charge limit, sailing, discharge, auto-discharge, top up, heat protection, calibration, stop charging asleep, stay awake until limit, clamshell discharge, MagSafe LED, power modes, schedules + history, notifications, dashboard with Sankey power flow, Apple Shortcuts actions. Root helper uses the M5 SMC keys `CHTE` / `CHIE` / `ACLC`. |
 | **XDR Boost** | BrightIntosh | Up to 1000 nits everywhere, custom shortcuts, battery/heat cut-offs, timer, auto-on with charger, external XDR displays. |
-| **Bitwarden Bridge** | Bitwarden autofill on iPhone | ⌃⌘L fills the matching login into any app (username, Tab, password), ⌃⌥⌘L searchable picker, ⌃⌘O types the 2FA code. Official `bw` CLI underneath; master password in the Keychain behind Touch ID; auto-lock on timeout, sleep and screen lock; per-app memory. |
 | **Task Manager** *(standalone app)* | Windows Task Manager | Processes grouped by app, CPU/memory, not-responding detection, End task / Force quit / process tree, live CPU/GPU/memory/network/disk graphs, startup items. ⌃⇧Esc. |
 
 Two apps are built from this repo: **Taru Tweaks** (menu bar, all modules) and **Task Manager** (standalone, Dock app). Taru Tweaks owns the ⌃⇧Esc shortcut and launches Task Manager.
@@ -28,7 +27,7 @@ Signing uses the local Apple Development certificate (see `project.yml`). Keep t
 ## Layout
 
 - `App/` app shell, menu bar items, settings window, Shortcuts intents
-- `Modules/` Switcher, Battery, Brightness, Vault, TaskManager
+- `Modules/` Switcher, Battery, Brightness, Dock, MenuBar, TaskManager
 - `TaskManagerApp/` standalone Task Manager app entry point
 - `Shared/` theme, settings UI kit, hotkeys, battery config shared with the helper
 - `Helper/` root launch daemon (`com.taru.tweaks.helper`) registered with `SMAppService`
