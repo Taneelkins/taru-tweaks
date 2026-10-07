@@ -47,6 +47,10 @@ final class WindowEngine {
             if let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication { self?.noteFocus(app.processIdentifier) }
         }
         if let f = NSWorkspace.shared.frontmostApplication { noteFocus(f.processIdentifier) }
+        NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] n in
+            guard let w = n.object as? NSWindow, w.level == .normal, !(w is NSPanel) else { return }
+            self?.record(CGWindowID(w.windowNumber))
+        }
     }
 
     private func observe(_ app: NSRunningApplication) {
@@ -66,11 +70,26 @@ final class WindowEngine {
         observers[pid] = o
     }
 
+    func record(_ id: CGWindowID) {
+        guard id != 0 else { return }
+        mru.removeAll { $0 == id }
+        mru.insert(id, at: 0)
+        if mru.count > 200 { mru.removeLast(mru.count - 200) }
+    }
+
+    func topWindow(of pid: pid_t) -> CGWindowID {
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return info.first { ($0[kCGWindowOwnerPID as String] as? pid_t) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }?[kCGWindowNumber as String] as? CGWindowID ?? 0
+    }
+
     func noteFocus(_ pid: pid_t) {
-        let el = appElement(pid)
-        guard let w: AXUIElement = ax(el, kAXFocusedWindowAttribute) else { return }
+        if pid == ProcessInfo.processInfo.processIdentifier {
+            if let w = NSApp.keyWindow ?? NSApp.mainWindow, w.level == .normal { record(CGWindowID(w.windowNumber)) }
+            return
+        }
         var id: CGWindowID = 0
-        _ = _AXUIElementGetWindow(w, &id)
+        if let w: AXUIElement = ax(appElement(pid), kAXFocusedWindowAttribute) { _ = _AXUIElementGetWindow(w, &id) }
+        if id == 0 { id = topWindow(of: pid) }
         guard id != 0 else { return }
         mru.removeAll { $0 == id }
         mru.insert(id, at: 0)
