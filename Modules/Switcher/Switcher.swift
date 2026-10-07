@@ -28,8 +28,10 @@ final class Switcher: ObservableObject {
         guard !all.isEmpty else { return }
         query = ""; searching = false
         openMouse = NSEvent.mouseLocation
+        let target = all.count > 1 ? (backwards ? all[all.count - 1] : all[1]) : all.first
+        if grouping { all = Switcher.grouped(all) }
         windows = all
-        selected = windows.count > 1 ? (backwards ? windows.count - 1 : 1) : 0
+        selected = target.flatMap { t in windows.firstIndex { $0.id == t.id && $0.pid == t.pid } } ?? 0
         visible = true
         shown = false
         showTimer?.invalidate()
@@ -79,13 +81,27 @@ final class Switcher: ObservableObject {
         p.setFrame(NSRect(x: f.midX - size.width / 2, y: f.midY - size.height / 2 + f.height * 0.05, width: size.width, height: size.height), display: true)
     }
 
+    var grouping: Bool { SwitcherPrefs.shared.groupByApp && style == .thumbs }
+
+    static func grouped(_ list: [Win]) -> [Win] {
+        var keys: [String] = []
+        var buckets: [String: [Win]] = [:]
+        for w in list {
+            let k = w.bundleID ?? w.appName
+            if buckets[k] == nil { keys.append(k) }
+            buckets[k, default: []].append(w)
+        }
+        return keys.flatMap { buckets[$0] ?? [] }
+    }
+
     func step(_ d: Int) {
         guard !windows.isEmpty else { return }
         selected = (selected + d + windows.count) % windows.count
+        if grouping && shown { layout() }
         updateOutline()
     }
 
-    func select(_ i: Int) { guard windows.indices.contains(i) else { return }; selected = i; updateOutline() }
+    func select(_ i: Int) { guard windows.indices.contains(i) else { return }; selected = i; if grouping && shown { layout() }; updateOutline() }
 
     func released() {
         guard let sc = shortcut else { commit(); return }

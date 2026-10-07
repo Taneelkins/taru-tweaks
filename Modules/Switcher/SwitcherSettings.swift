@@ -75,6 +75,7 @@ struct SwitcherSettings: View {
             SettingRow(title: "Max width", detail: "\(Int(prefs.maxWidth * 100))% of the screen") { Slider(value: $prefs.maxWidth, in: 0.4...0.98).frame(width: 180) }
             SettingRow(title: "Show on") { Seg(options: [("Active screen", ShowOn.active), ("Mouse screen", ShowOn.mouse), ("Main", ShowOn.main)], value: $prefs.showOn) }
             SettingRow(title: "Appear after", detail: prefs.delay == 0 ? "Instantly" : "\(Int(prefs.delay * 1000)) ms · a quick tap switches without flashing the switcher") { Slider(value: $prefs.delay, in: 0...0.4, step: 0.05).frame(width: 180) }
+            SettingRow(title: "Group windows by app", detail: "Each app is a stack; it fans out when you reach it.") { Toggle("", isOn: $prefs.groupByApp).toggleStyle(.switch).labelsHidden() }
             SettingRow(title: "Highlight the selected window on screen") { Toggle("", isOn: $prefs.previewWindow).toggleStyle(.switch).labelsHidden() }
             SettingRow(title: "Status labels", detail: "MIN · HIDDEN · FULL · SPACE 2") { Toggle("", isOn: $prefs.badges).toggleStyle(.switch).labelsHidden() }
         }

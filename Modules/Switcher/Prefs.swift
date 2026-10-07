@@ -85,6 +85,7 @@ final class SwitcherPrefs: ObservableObject {
     @Published var desktopMask: UInt64 { didSet { d.set(desktopMask, forKey: "desktopMask") } }
     @Published var desktopKey: Int64 { didSet { d.set(desktopKey, forKey: "desktopKey") } }
     @Published var dockForceQuit: Bool { didSet { d.set(dockForceQuit, forKey: "dockForceQuit") } }
+    @Published var groupByApp: Bool { didSet { d.set(groupByApp, forKey: "groupByApp") } }
     @Published var enabled: Bool { didSet { d.set(enabled, forKey: "switcherEnabled"); enabled ? SkyLight.moveNativeSwitcherToOption() : SkyLight.restoreNativeSwitcher() } }
 
     init() {
@@ -111,6 +112,7 @@ final class SwitcherPrefs: ObservableObject {
         desktopMask = (d.object(forKey: "desktopMask") as? NSNumber)?.uint64Value ?? 0x100000
         desktopKey = (d.object(forKey: "desktopKey") as? NSNumber)?.int64Value ?? 2
         dockForceQuit = d.object(forKey: "dockForceQuit") as? Bool ?? true
+        groupByApp = d.object(forKey: "groupByApp") as? Bool ?? true
         enabled = d.object(forKey: "switcherEnabled") as? Bool ?? true
     }
 
