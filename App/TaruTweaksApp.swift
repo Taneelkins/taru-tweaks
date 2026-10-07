@@ -14,7 +14,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let any = [settings, dashboard, taskManager].contains { $0?.isVisible == true }
         let policy: NSApplication.ActivationPolicy = (any || UserDefaults.standard.bool(forKey: "dock.always")) ? .regular : .accessory
         if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
-        if policy == .regular { NSApp.activate(ignoringOtherApps: true) }
     }
 
     func present(_ w: NSWindow?) {
@@ -71,10 +70,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             src.setEventHandler { Brightness.shared.stop(); SkyLight.restoreNativeSwitcher(); exit(0) }
             src.resume(); _ = Unmanaged.passRetained(src)
         }
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        let atLogin = event?.eventID == AEEventID(kAEOpenApplication) && event?.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue == OSType(keyAELaunchedAsLogInItem)
         if !UserDefaults.standard.bool(forKey: "onboarded") {
             UserDefaults.standard.set(true, forKey: "onboarded")
             try? SMAppService.mainApp.register()
             openSettings("general")
+        } else if !atLogin && !CommandLine.arguments.contains("--background") {
+            openSettings(nil)
         }
     }
 

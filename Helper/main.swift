@@ -58,7 +58,12 @@ func loadConfig() -> BatteryConfig {
 func saveConfig(_ c: BatteryConfig) {
     let e = JSONEncoder(); e.outputFormatting = .prettyPrinted
     if let d = try? e.encode(c) { try? d.write(to: ConfigURL, options: .atomic) }
-    chmod(ConfigURL.path, 0o666)
+    lockDown(ConfigURL.path, 0o664)
+}
+
+func lockDown(_ path: String, _ mode: mode_t) {
+    chown(path, 0, 80)
+    chmod(path, mode)
 }
 
 func appendTaskLog(_ title: String) {
@@ -272,7 +277,17 @@ func powerCallback(_ refcon: UnsafeMutableRawPointer?, _ service: io_service_t, 
 }
 
 try? FileManager.default.createDirectory(at: TweaksDir, withIntermediateDirectories: true)
-chmod(TweaksDir.path, 0o777)
+lockDown(TweaksDir.path, 0o775)
+for f in ["config.json", "heartbeat"] where FileManager.default.fileExists(atPath: TweaksDir.appendingPathComponent(f).path) {
+    lockDown(TweaksDir.appendingPathComponent(f).path, 0o664)
+}
+
+let selfPath = CommandLine.arguments[0]
+let selfStamp = (try? FileManager.default.attributesOfItem(atPath: selfPath)[.modificationDate] as? Date) ?? .distantPast
+RunLoop.main.add(Timer(timeInterval: 10, repeats: true) { _ in
+    let now = (try? FileManager.default.attributesOfItem(atPath: selfPath)[.modificationDate] as? Date) ?? selfStamp
+    if now != selfStamp || !FileManager.default.fileExists(atPath: selfPath) { log("helper updated, restarting"); engine.restore(); exit(0) }
+}, forMode: .common)
 migrateOldFuel()
 if !FileManager.default.fileExists(atPath: ConfigURL.path) { saveConfig(BatteryConfig()) }
 guard smc_open() == 0 else { log("cannot open SMC"); exit(1) }

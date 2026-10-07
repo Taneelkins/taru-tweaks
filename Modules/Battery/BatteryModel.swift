@@ -117,6 +117,18 @@ final class BatteryModel: ObservableObject {
         }
     }
 
+    private var upgrading = false
+    func upgradeIfNeeded() {
+        guard helperAlive, helperOutdated, !upgrading else { return }
+        upgrading = true
+        Task {
+            try? await service.unregister()
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            try? service.register()
+            await MainActor.run { self.helperState = self.service.status; self.upgrading = false }
+        }
+    }
+
     func installHelper() {
         do { try service.register() } catch { NSLog("helper register: \(error)") }
         helperState = service.status
@@ -128,6 +140,7 @@ final class BatteryModel: ObservableObject {
         helperState = service.status
         if let d = try? Data(contentsOf: TweaksDir.appendingPathComponent("status.json")), let s = try? JSONDecoder().decode(BatteryStatus.self, from: d) {
             status = s
+            upgradeIfNeeded()
             if s.state != lastState { if !lastState.isEmpty { announce(from: lastState, to: s) }; lastState = s.state }
         }
         if !saving, let d = try? Data(contentsOf: TweaksDir.appendingPathComponent("config.json")),
