@@ -562,9 +562,41 @@ final class DockView: NSView, NSPopoverDelegate {
         guard t !== hover else { return }
         hover?.icon.setAffineTransform(.identity)
         hover = t
+        hoverWork?.cancel()
         guard let t else { label.hide(); return }
         t.icon.setAffineTransform(CGAffineTransform(scaleX: 1.1, y: 1.1))
+        if popup != nil && hoverPopup && popupTile === t { return }
         showLabel(t.name, over: rect(of: t))
+        guard t.isApp, let u = t.url, drag == nil, !tracking else { return }
+        let w = DispatchWorkItem { [weak self, weak t] in
+            guard let self, let t, self.hover === t else { return }
+            let wins = self.windows(of: u)
+            if wins.count >= 2 { self.label.hide(); self.showWindows(wins, from: t, hovering: true) } else if self.hoverPopup { self.popup?.dismiss() }
+        }
+        hoverWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + (popup != nil && hoverPopup ? 0.12 : 0.45), execute: w)
+    }
+
+    private var hoverWork: DispatchWorkItem?
+    private var hoverPopup = false
+    private weak var popupTile: DockTile?
+    private var hoverWatch: Timer?
+
+    private func watchHoverPopup() {
+        hoverWatch?.invalidate()
+        var misses = 0
+        hoverWatch = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] timer in
+            guard let self, let p = self.popup, self.hoverPopup, let w = self.window else { timer.invalidate(); return }
+            let m = NSEvent.mouseLocation
+            let tileRect = self.popupTile.map { w.convertToScreen(self.convert(self.rect(of: $0), to: nil)).insetBy(dx: -6, dy: -10) } ?? .zero
+            let bridge = NSRect(x: min(tileRect.minX, p.frame.minX), y: tileRect.maxY - 2, width: max(tileRect.maxX, p.frame.maxX) - min(tileRect.minX, p.frame.minX), height: max(0, p.frame.minY - tileRect.maxY + 4))
+            if p.frame.insetBy(dx: -6, dy: -6).contains(m) || tileRect.contains(m) || bridge.contains(m) || w.frame.contains(m) && self.hover != nil && self.hover === self.popupTile {
+                misses = 0
+            } else {
+                misses += 1
+                if misses >= 2 { p.dismiss(); timer.invalidate() }
+            }
+        }
     }
 
     private func showLabel(_ text: String, over r: CGRect, for seconds: Double? = nil) {
@@ -673,9 +705,10 @@ final class DockView: NSView, NSPopoverDelegate {
         default:
             guard let u = t.url else { return }
             let wins = windows(of: u)
-            if wins.count > 1 { showWindows(wins, from: t); return }
-            if wins.count == 1, let w = wins.first, NSWorkspace.shared.frontmostApplication?.processIdentifier != w.pid || w.minimized {
-                WindowEngine.shared.focus(w)
+            popup?.dismiss()
+            if let w = mostRecent(wins), NSWorkspace.shared.frontmostApplication?.processIdentifier != w.pid || w.minimized || wins.count > 1 {
+                NSRunningApplication(processIdentifier: w.pid)?.activate(options: [.activateAllWindows])
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { WindowEngine.shared.focus(w) }
                 return
             }
             if !NSWorkspace.shared.runningApplications.contains(where: { $0.bundleURL?.path == u.path }) {
@@ -780,22 +813,37 @@ final class DockView: NSView, NSPopoverDelegate {
         return WindowEngine.shared.all().filter { pids.contains($0.pid) && !$0.windowless && ($0.minimized || ($0.frame.width >= 420 && $0.frame.height >= 240)) }
     }
 
-    private func showWindows(_ wins: [Win], from t: DockTile) {
-        let picker = WindowPickerModel(wins: wins)
+    private func mostRecent(_ wins: [Win]) -> Win? {
+        let order = WindowEngine.shared.mru
+        return wins.min { (order.firstIndex(of: $0.id) ?? Int.max) < (order.firstIndex(of: $1.id) ?? Int.max) }
+    }
+
+    private func showWindows(_ wins: [Win], from t: DockTile, hovering: Bool = false) {
+        let order = WindowEngine.shared.mru
+        let sorted = wins.sorted { (order.firstIndex(of: $0.id) ?? Int.max) < (order.firstIndex(of: $1.id) ?? Int.max) }
+        let picker = WindowPickerModel(wins: sorted)
         present(WindowPicker(model: picker) { [weak self] w in
             self?.popup?.dismiss()
-            WindowEngine.shared.focus(w)
+            NSRunningApplication(processIdentifier: w.pid)?.activate(options: [.activateAllWindows])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { WindowEngine.shared.focus(w) }
         }, from: t)
+        hoverPopup = hovering
+        popupTile = t
+        if hovering { watchHoverPopup() }
         Thumbnails.shared.refresh(wins) { DispatchQueue.main.async { picker.reload() } }
     }
 
     private func present<V: View>(_ content: V, from t: DockTile) {
         popup?.dismiss()
+        hoverPopup = false
+        hoverWatch?.invalidate()
         guard let w = window else { return }
         let p = DockPopup(content)
         p.onClose = { [weak self, weak p] in
             guard let self, self.popup === p else { return }
             self.popup = nil
+            self.hoverPopup = false
+            self.hoverWatch?.invalidate()
             self.dock.holds -= 1
         }
         popup = p
