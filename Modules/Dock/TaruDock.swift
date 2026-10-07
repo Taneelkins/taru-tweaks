@@ -571,7 +571,7 @@ final class DockView: NSView, NSPopoverDelegate {
         let w = DispatchWorkItem { [weak self, weak t] in
             guard let self, let t, self.hover === t else { return }
             let wins = self.windows(of: u)
-            if wins.count >= 2 { self.label.hide(); self.showWindows(wins, from: t, hovering: true) } else if self.hoverPopup { self.popup?.dismiss() }
+            if wins.count >= 1 { self.label.hide(); self.showWindows(wins, from: t, hovering: true) } else if self.hoverPopup { self.popup?.dismiss() }
         }
         hoverWork = w
         DispatchQueue.main.asyncAfter(deadline: .now() + (popup != nil && hoverPopup ? 0.12 : 0.45), execute: w)
