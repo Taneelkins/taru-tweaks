@@ -146,6 +146,7 @@ final class WindowEngine {
             }
             let title = info?.title.isEmpty == false ? info!.title : (w[kCGWindowName as String] as? String ?? "")
             let current = winSpaces.isEmpty || winSpaces.contains { spaces.current.contains($0) }
+            if current && !onscreen && !(info?.minimized ?? false) && !(info?.fullscreen ?? false) && !app.isHidden { continue }
             if pid == me {
                 guard let nw = NSApp.windows.first(where: { $0.windowNumber == Int(id) }), nw.isVisible || nw.isMiniaturized, nw.level == .normal, !(nw is NSPanel) else { continue }
             }
