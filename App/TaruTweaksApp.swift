@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = BatteryModel.shared
         _ = Brightness.shared
         TaruDock.shared.start()
+        Wallpaper.shared.start()
         debugHooks()
         registerTaskManagerKey()
         MenuBarManager.registerKey()
@@ -134,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                      "selectedTitle": sw.windows.indices.contains(sw.selected) ? "\(sw.windows[sw.selected].appName) | \(sw.windows[sw.selected].title)" : "",
                                      "front": NSWorkspace.shared.frontmostApplication?.localizedName ?? "",
                                      "native1": SkyLight.hotKeyValue(1), "native27": SkyLight.hotKeyEnabled(27),
-                                     "dockPreset": DockPresets.shared.activeName, "dockCount": DockPresets.shared.presets.count, "dockShown": TaruDock.shared.shown, "dockFrame": NSStringFromRect(TaruDock.shared.panel.frame), "xdrOn": Brightness.shared.on, "xdrFactor": Brightness.shared.factor, "xdrNote": Brightness.shared.note]
+                                     "dockPreset": DockPresets.shared.activeName, "dockCount": DockPresets.shared.presets.count, "dockShown": TaruDock.shared.shown, "wpPlaying": Wallpaper.shared.playing, "wpCurrent": Wallpaper.shared.current, "dockFrame": NSStringFromRect(TaruDock.shared.panel.frame), "xdrOn": Brightness.shared.on, "xdrFactor": Brightness.shared.factor, "xdrNote": Brightness.shared.note]
             if let d = try? JSONSerialization.data(withJSONObject: st, options: .prettyPrinted) { try? d.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-state.json")) }
         }
         dc.addObserver(forName: .init("com.taru.tweaks.notifytest"), object: nil, queue: .main) { _ in
@@ -176,7 +177,7 @@ struct SettingsRoot: View {
                                            SidebarItem(id: "desktop", title: "Desktop", icon: "menubar.dock.rectangle"), SidebarItem(id: "dock", title: "Taru Dock", icon: "dock.rectangle")]),
         SidebarGroup(id: "Battery", items: [SidebarItem(id: "battery.charging", title: "Charging", icon: "bolt"), SidebarItem(id: "battery.protection", title: "Protection", icon: "thermometer.medium"),
                                            SidebarItem(id: "battery.automation", title: "Automation", icon: "calendar.badge.clock"), SidebarItem(id: "battery.display", title: "Dashboard", icon: "chart.xyaxis.line")]),
-        SidebarGroup(id: "Display", items: [SidebarItem(id: "brightness", title: "XDR Boost", icon: "sun.max")])
+        SidebarGroup(id: "Display", items: [SidebarItem(id: "brightness", title: "XDR Boost", icon: "sun.max"), SidebarItem(id: "wallpaper", title: "Live Wallpaper", icon: "play.rectangle")])
     ]
     var body: some View {
         TweaksShell(groups: groups, current: $nav.page) { page in
@@ -187,6 +188,7 @@ struct SettingsRoot: View {
             case let p where p.hasPrefix("switcher") || p == "desktop": SwitcherSettings(page: p)
             case let p where p.hasPrefix("battery"): BatterySettings(page: p)
             case "dock": DockPresetsSettings()
+            case "wallpaper": WallpaperSettings()
             default: BrightnessSettings()
             }
         }
