@@ -12,6 +12,7 @@ final class TaruBarModel: ObservableObject {
     @Published var showBattery: Bool { didSet { d.set(showBattery, forKey: "bar.battery"); changed() } }
     @Published var showClock: Bool { didSet { d.set(showClock, forKey: "bar.clock"); changed() } }
     @Published var tightSpacing: Bool { didSet { d.set(tightSpacing, forKey: "bar.tight"); TaruBar.shared.applySpacing() } }
+    @Published var overlay: Bool { didSet { d.set(overlay, forKey: "bar.overlay"); changed(); TaruBar.shared.updateButton() } }
     @Published var city: String { didSet { d.set(city, forKey: "bar.city") } }
     @Published var latitude: Double { didSet { d.set(latitude, forKey: "bar.lat") } }
     @Published var longitude: Double { didSet { d.set(longitude, forKey: "bar.lon") } }
@@ -35,6 +36,7 @@ final class TaruBarModel: ObservableObject {
         showBattery = d.object(forKey: "bar.battery") as? Bool ?? false
         showClock = d.object(forKey: "bar.clock") as? Bool ?? false
         tightSpacing = d.object(forKey: "bar.tight") as? Bool ?? true
+        overlay = d.object(forKey: "bar.overlay") as? Bool ?? false
         city = d.string(forKey: "bar.city") ?? "Toledo, Ohio"
         latitude = d.object(forKey: "bar.lat") as? Double ?? 41.6528
         longitude = d.object(forKey: "bar.lon") as? Double ?? -83.5379
@@ -76,6 +78,7 @@ final class TaruBar {
     private var panel: TaruBarPanel?
     private var host: NSHostingView<TaruBarView>?
     private var timers: [Timer] = []
+    private var button: NSStatusItem?
     private var lastTicks: [(UInt64, UInt64)] = []
     private var started = false
 
@@ -105,7 +108,23 @@ final class TaruBar {
         }
         timers.forEach { $0.invalidate() }
         timers = []
-        guard model.enabled else { panel?.orderOut(nil); return }
+        guard model.enabled else {
+            panel?.orderOut(nil)
+            if let b = button { NSStatusBar.system.removeStatusItem(b); button = nil }
+            return
+        }
+        if button == nil {
+            let ud = UserDefaults.standard
+            if ud.object(forKey: "NSStatusItem Preferred Position tt.bar.toggle") == nil { ud.set(330.0, forKey: "NSStatusItem Preferred Position tt.bar.toggle") }
+            let b = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            b.autosaveName = "tt.bar.toggle"
+            b.button?.target = self
+            b.button?.action = #selector(buttonClicked)
+            b.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            b.button?.toolTip = "Show or hide Taru Bar readouts · right-click to choose them"
+            button = b
+            updateButton()
+        }
         if panel == nil {
             let p = TaruBarPanel()
             let h = NSHostingView(rootView: TaruBarView(model: model))
@@ -121,6 +140,34 @@ final class TaruBar {
         fetchWeather()
         applySpacing()
         place()
+    }
+
+    func updateButton() {
+        guard let b = button?.button else { return }
+        let img = NSImage(systemSymbolName: model.overlay ? "chart.bar.fill" : "chart.bar", accessibilityDescription: "Taru Bar")
+        img?.isTemplate = true
+        b.image = img
+    }
+
+    @objc private func buttonClicked() {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            let m = NSMenu()
+            for (title, key) in [("CPU", \TaruBarModel.showCPU), ("Memory", \.showRAM), ("Now playing", \.showMusic), ("Battery", \.showBattery), ("Weather", \.showWeather), ("Clock", \.showClock)] as [(String, ReferenceWritableKeyPath<TaruBarModel, Bool>)] {
+                let it = ClosureItem(title) { [weak self] in guard let self else { return }; self.model[keyPath: key].toggle() }
+                it.state = model[keyPath: key] ? .on : .off
+                m.addItem(it)
+            }
+            m.addItem(.separator())
+            m.addItem(ClosureItem("Minimal (battery only)") { [weak self] in self?.model.minimal() })
+            m.addItem(ClosureItem("Show everything") { [weak self] in self?.model.everything() })
+            m.addItem(.separator())
+            m.addItem(ClosureItem("Taru Bar settings…") { TaruBar.openSettings() })
+            button?.menu = m
+            button?.button?.performClick(nil)
+            button?.menu = nil
+            return
+        }
+        model.overlay.toggle()
     }
 
     func applySpacing() {
@@ -181,12 +228,21 @@ final class TaruBar {
         let barHeight = max(f.maxY - screen.visibleFrame.maxY, screen.auxiliaryTopRightArea?.height ?? 0, 24)
         let notchRight = screen.auxiliaryTopRightArea?.minX ?? f.minX
         let start = max(notchRight + 6, f.minX + appMenusMaxX() + 12)
-        let end = leftmostStatusItem(after: start) - 6
+        let gapEnd = leftmostStatusItem(after: start) - 6
         let want = host.fittingSize.width
+        var end = gapEnd
+        if model.overlay, gapEnd - start < want, let bf = button?.button?.window?.frame, bf.minX > start { end = bf.minX - 2 }
         let room = end - start
-        guard want > 1, room > 60 else { panel.orderOut(nil); return }
-        let width = min(want, room)
-        panel.setFrame(NSRect(x: end - width, y: f.maxY - barHeight, width: width, height: barHeight), display: true)
+        guard want > 1, room > 60, model.overlay || gapEnd - start >= want else { panel.orderOut(nil); return }
+        var x0 = end - min(want, room)
+        if model.overlay && end != gapEnd {
+            let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+            for w in info where (w[kCGWindowLayer as String] as? Int) == 25 {
+                guard let b = w[kCGWindowBounds as String] as? NSDictionary, let r = CGRect(dictionaryRepresentation: b), r.minY < 40, r.width < 600 else { continue }
+                if r.minX < x0 && r.maxX > x0 { x0 = max(start, r.minX - 2) }
+            }
+        }
+        panel.setFrame(NSRect(x: x0, y: f.maxY - barHeight, width: end - x0, height: barHeight), display: true)
         panel.orderFrontRegardless()
     }
 
@@ -339,7 +395,9 @@ struct TaruBarView: View {
         .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
         .foregroundStyle(Palette.bone)
         .fixedSize()
-        .frame(maxHeight: .infinity)
+        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        .background(model.overlay ? Color.black : Color.clear)
         .contextMenu {
             Toggle("CPU", isOn: $model.showCPU)
             Toggle("Memory", isOn: $model.showRAM)
