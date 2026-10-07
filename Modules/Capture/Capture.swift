@@ -4,12 +4,12 @@ import SwiftUI
 import Vision
 
 enum CaptureAction: String, CaseIterable, Identifiable {
-    case area, full, text, scroll
+    case area, full
     var id: String { rawValue }
-    var hotKeyID: UInt32 { [.area: 501, .full: 502, .text: 503, .scroll: 504][self]! }
-    var title: String { [.area: "Area or window", .full: "Full screen", .text: "Copy text from area", .scroll: "Scrolling capture"][self]! }
-    var defaultMask: UInt64 { self == .text ? 0x140000 : 0x120000 }
-    var defaultKey: Int64 { [.area: 19, .full: 18, .text: 17, .scroll: 25][self]! }
+    var hotKeyID: UInt32 { [.area: 501, .full: 502][self]! }
+    var title: String { [.area: "Capture (area or window)", .full: "Full screen, straight to clipboard"][self]! }
+    var defaultMask: UInt64 { 0x120000 }
+    var defaultKey: Int64 { [.area: 19, .full: 18][self]! }
 }
 
 struct DisplayShot {
@@ -50,9 +50,15 @@ final class CapturePrefs: ObservableObject {
     @Published var save: Bool { didSet { d.set(save, forKey: "cap.save") } }
     @Published var sound: Bool { didSet { d.set(sound, forKey: "cap.sound") } }
     @Published var folder: String { didSet { d.set(folder, forKey: "cap.folder") } }
+    @Published var saveOnCopy: Bool { didSet { d.set(saveOnCopy, forKey: "cap.saveOnCopy") } }
+    @Published var enterAction: String { didSet { d.set(enterAction, forKey: "cap.enter") } }
+    @Published var magnifier: Bool { didSet { d.set(magnifier, forKey: "cap.loupe") } }
 
     init() {
-        openEditor = d.object(forKey: "cap.editor") as? Bool ?? true
+        openEditor = d.object(forKey: "cap.editor") as? Bool ?? false
+        saveOnCopy = d.object(forKey: "cap.saveOnCopy") as? Bool ?? true
+        enterAction = d.string(forKey: "cap.enter") ?? "both"
+        magnifier = d.object(forKey: "cap.loupe") as? Bool ?? true
         copy = d.object(forKey: "cap.copy") as? Bool ?? true
         save = d.object(forKey: "cap.save") as? Bool ?? true
         sound = d.object(forKey: "cap.sound") as? Bool ?? true
@@ -83,6 +89,7 @@ final class Capture {
         for a in CaptureAction.allCases {
             HotKeys.shared.set(a.hotKeyID, mask: prefs.mask(a), key: prefs.key(a)) { Capture.shared.run(a) }
         }
+        for retired: UInt32 in [503, 504] { HotKeys.shared.set(retired, mask: 0, key: 0, enabled: false) {} }
     }
 
     func run(_ action: CaptureAction) {
@@ -96,48 +103,58 @@ final class Capture {
             if action == .full {
                 let mouse = NSEvent.mouseLocation
                 let shot = shots.first { NSMouseInRect(mouse, $0.screen.frame, false) } ?? shots[0]
-                self.finish(shot.image, scale: shot.scale)
+                self.deliver(shot.image, scale: shot.scale, copy: true, save: self.prefs.save)
                 return
             }
-            let mode: SelectionOverlay.Mode = action == .text ? .text : action == .scroll ? .scroll : .area
-            self.overlay = SelectionOverlay(shots: shots, mode: mode) { [weak self] result in self?.handle(result) }
+            self.overlay = SelectionOverlay(shots: shots) { [weak self] result in self?.handle(result) }
         }
     }
 
     private func handle(_ result: SelectionOverlay.Result) {
         overlay = nil
+        restoreFocus()
         switch result {
-        case .cancel:
-            restoreFocus()
+        case .cancel, .finished:
+            break
         case .full(let shot):
-            restoreFocus()
-            finish(shot.image, scale: shot.scale)
+            deliver(shot.image, scale: shot.scale, copy: true, save: prefs.save)
         case .color(let hex):
-            restoreFocus()
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(hex, forType: .string)
             toast.show("Copied \(hex)", swatch: NSColor(hexString: hex))
-        case .area(let shot, let rect, let mode):
-            restoreFocus()
-            switch mode {
-            case .text:
-                if let img = shot.crop(rect) { recognize(img) }
-            case .scroll:
-                scrolling = ScrollCapture(rect: rect, screen: shot.screen) { [weak self] img in
+        case .scroll(let shot, let rect):
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                self.scrolling = ScrollCapture(rect: rect, screen: shot.screen) { [weak self] img in
                     self?.scrolling = nil
-                    if let img { self?.finish(img, scale: shot.scale) }
+                    if let img { EditorController.show(img, scale: shot.scale, savedURL: nil) }
                 }
-                scrolling?.start()
-            case .area:
-                if let img = shot.crop(rect) { finish(img, scale: shot.scale) }
+                self.scrolling?.start()
             }
         case .window(let id, let shot, let rect):
-            restoreFocus()
             Task { @MainActor in
                 let img = await self.captureWindow(id, scale: shot.scale) ?? shot.crop(rect)
-                if let img { self.finish(img, scale: shot.scale) }
+                if let img { self.deliver(img, scale: shot.scale, copy: true, save: self.prefs.save) }
             }
         }
+    }
+
+    func deliver(_ image: CGImage, scale: CGFloat, copy doCopy: Bool, save doSave: Bool) {
+        if prefs.sound { NSSound(contentsOfFile: "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif", byReference: true)?.play() }
+        let url = doSave ? write(image, scale: scale) : nil
+        if doCopy { copy(image, scale: scale) }
+        if prefs.openEditor { EditorController.show(image, scale: scale, savedURL: url); return }
+        let what = doCopy && url != nil ? "Copied and saved" : doCopy ? "Copied" : url != nil ? "Saved" : "Captured"
+        toast.show(what, thumbnail: NSImage(cgImage: image, size: .zero)) { EditorController.show(image, scale: scale, savedURL: url) }
+    }
+
+    func saveAs(_ image: CGImage, scale: CGFloat) {
+        let p = NSSavePanel()
+        p.allowedContentTypes = [.png]
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+        p.nameFieldStringValue = "Screenshot \(f.string(from: Date())).png"
+        p.directoryURL = URL(fileURLWithPath: prefs.folder)
+        NSApp.activate(ignoringOtherApps: true)
+        if p.runModal() == .OK, let url = p.url, write(image, scale: scale, to: url) != nil { toast.show("Saved \(url.lastPathComponent)") }
     }
 
     private func restoreFocus() {
@@ -172,19 +189,6 @@ final class Capture {
         cfg.showsCursor = false
         cfg.captureResolution = .best
         return try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: w), configuration: cfg)
-    }
-
-    func finish(_ image: CGImage, scale: CGFloat) {
-        if prefs.sound { NSSound(contentsOfFile: "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif", byReference: true)?.play() }
-        let url = prefs.save ? write(image, scale: scale) : nil
-        if prefs.copy { copy(image, scale: scale) }
-        if prefs.openEditor {
-            EditorController.show(image, scale: scale, savedURL: url)
-        } else {
-            toast.show(prefs.copy ? "Copied" + (url != nil ? " and saved" : "") : (url != nil ? "Saved" : "Captured"), thumbnail: NSImage(cgImage: image, size: .zero)) {
-                EditorController.show(image, scale: scale, savedURL: url)
-            }
-        }
     }
 
     func copy(_ image: CGImage, scale: CGFloat) {
@@ -313,7 +317,7 @@ struct CaptureSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PageTitle(title: "Screenshots", subtitle: "Freeze the screen, pick an area or click a window, then mark it up. Copy text out of anything, scroll long pages, pin shots on top.")
+            PageTitle(title: "Screenshots", subtitle: "Lightshot-style: drag an area (or click a window) on the frozen screen, then draw, resize and move it, and finish from the bar underneath. Copy, save, copy text, pin, scroll or open the editor, all after the drag.")
             SectionLabel(text: "Shortcuts")
             ForEach(CaptureAction.allCases) { a in
                 SettingRow(title: a.title) {
@@ -321,21 +325,25 @@ struct CaptureSettings: View {
                                 key: Binding(get: { prefs.key(a) }, set: { prefs.setKey(a, mask: prefs.mask(a), key: $0) }))
                 }
             }
-            Text("While picking an area: drag to select, click a window to grab just it, Space for the whole screen, T copies text instead, C copies the color under the cursor, Esc cancels.")
-                .font(.system(size: 11)).foregroundStyle(Palette.ash).padding(.top, 8)
-            SectionLabel(text: "After a capture")
-            SettingRow(title: "Open the editor") { Switch(on: $prefs.openEditor) }
-            SettingRow(title: "Copy to clipboard") { Switch(on: $prefs.copy) }
-            SettingRow(title: "Save to folder", detail: prefs.folder.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
+            Text("After the drag: drag the handles to resize, drag inside with Move (V) to reposition, arrow keys nudge (⇧ for 10). Tools: D pen, A arrow, R box, L line, T text, H highlight, B blur, N steps, M measure, I color. 1–6 colors, ⌘Z undo, ⌘C copy, ⌘S save, O copy text, S scrolling capture, P pin, E editor, Return finish, Esc cancel.")
+                .font(.system(size: 11)).foregroundStyle(Palette.ash).padding(.top, 8).fixedSize(horizontal: false, vertical: true)
+            SectionLabel(text: "Finishing")
+            SettingRow(title: "Return does") { Seg(options: [("Copy + save", "both"), ("Copy", "copy"), ("Save", "save")], value: $prefs.enterAction) }
+            SettingRow(title: "Copy also saves a file", detail: "Keeps every capture in the folder, even ones you only copy.") { Switch(on: $prefs.saveOnCopy) }
+            SettingRow(title: "Save folder", detail: prefs.folder.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
                 HStack(spacing: 10) {
                     TweakButton(title: "Change") { pickFolder() }
                     Switch(on: $prefs.save)
                 }
             }
+            SettingRow(title: "Open the big editor after copying", detail: "Off: a thumbnail shows in the corner; click it to edit.") { Switch(on: $prefs.openEditor) }
+            SectionLabel(text: "Feel")
+            SettingRow(title: "Magnifier", detail: "Pixel grid, coordinates and color while you aim.") { Switch(on: $prefs.magnifier) }
             SettingRow(title: "Shutter sound") { Switch(on: $prefs.sound) }
             SectionLabel(text: "Capture now")
             HStack(spacing: 10) {
-                ForEach(CaptureAction.allCases) { a in TweakButton(title: a == .area ? "Area" : a == .full ? "Screen" : a == .text ? "Text" : "Scrolling") { Capture.shared.run(a) } }
+                TweakButton(title: "Area") { Capture.shared.run(.area) }
+                TweakButton(title: "Full screen") { Capture.shared.run(.full) }
             }
         }
     }

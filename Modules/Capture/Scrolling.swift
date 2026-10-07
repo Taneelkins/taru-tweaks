@@ -10,6 +10,8 @@ final class ScrollCapture {
     private var keyMonitor: Any?
     private var clickMonitor: Any?
     private var frames: [CGImage] = []
+    private var footer: CGImage?
+    private var footerHeight = 0
     private var slices: [CGImage] = []
 
     init(rect: CGRect, screen: NSScreen, done: @escaping (CGImage?) -> Void) {
@@ -98,20 +100,33 @@ final class ScrollCapture {
             }
             try? await Task.sleep(nanoseconds: 260_000_000)
             guard let next = await grab(), let prev = frames.last else { break }
-            let shift = ScrollCapture.overlapShift(prev, next)
-            if shift < 2 {
+            let o = ScrollCapture.overlap(prev, next)
+            if UserDefaults.standard.bool(forKey: "cap.debugScroll") {
+                let dir = URL(fileURLWithPath: "/tmp/tt-scroll"); try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try? NSBitmapImageRep(cgImage: next).representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("f\(frames.count).png"))
+                if frames.count == 1 { try? NSBitmapImageRep(cgImage: prev).representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("f0.png")) }
+                try? "\(frames.count) \(o)\n".appendLine(to: dir.appendingPathComponent("log.txt"))
+            }
+            if o.shift < 2 {
                 stalls += 1
                 if stalls >= 2 { break }
                 continue
             }
             stalls = 0
-            if let slice = next.cropping(to: CGRect(x: 0, y: next.height - shift, width: next.width, height: shift)) {
+            if footer == nil {
+                footer = o.bottom > 0 ? next.cropping(to: CGRect(x: 0, y: next.height - o.bottom, width: next.width, height: o.bottom)) : nil
+                footerHeight = o.bottom
+                if o.bottom > 0, let trimmed = first.cropping(to: CGRect(x: 0, y: 0, width: first.width, height: first.height - o.bottom)) { slices[0] = trimmed; total -= o.bottom }
+            }
+            let cut = footerHeight
+            if let slice = next.cropping(to: CGRect(x: 0, y: next.height - cut - o.shift, width: next.width, height: o.shift)) {
                 slices.append(slice)
-                total += shift
+                total += o.shift
             }
             frames.append(next)
         }
         if let m = savedMouse { CGWarpMouseCursorPosition(m) }
+        if let footer { slices.append(footer) }
         finish(stitch())
     }
 
@@ -145,35 +160,54 @@ final class ScrollCapture {
         return (0..<h).map { r in Array(UnsafeBufferPointer(start: p + r * columns, count: columns)) }
     }
 
-    static func overlapShift(_ prev: CGImage, _ next: CGImage) -> Int {
+    static func rowDiff(_ x: [UInt8], _ y: [UInt8]) -> Double {
+        var t = 0
+        for c in 0..<min(x.count, y.count) { t += abs(Int(x[c]) - Int(y[c])) }
+        return Double(t) / Double(max(x.count, 1))
+    }
+
+    /// Returns how many new rows scrolled in, plus the fixed header/footer heights that never move.
+    static func overlap(_ prev: CGImage, _ next: CGImage) -> (shift: Int, top: Int, bottom: Int) {
         let a = rows(prev), b = rows(next)
         let h = min(a.count, b.count)
-        guard h > 20 else { return 0 }
-        func cost(_ s: Int) -> Double {
-            let n = h - s
-            guard n > 10 else { return .infinity }
-            var total = 0, count = 0
+        guard h > 40 else { return (0, 0, 0) }
+        var top = 0
+        while top < h / 3, rowDiff(a[top], b[top]) < 1.5 { top += 1 }
+        var bottom = 0
+        while bottom < h / 3, rowDiff(a[h - 1 - bottom], b[h - 1 - bottom]) < 1.5 { bottom += 1 }
+        if top >= h / 3 && bottom >= h / 3 { return (0, top, bottom) }
+        let lo = top, hi = h - bottom
+        let span = hi - lo
+        guard span > 30 else { return (0, top, bottom) }
+        func cost(_ sh: Int) -> Double {
+            let n = span - sh
+            guard n > 12 else { return .infinity }
+            var total = 0.0, count = 0
             var r = 0
             while r < n {
-                let x = a[r + s], y = b[r]
-                for c in stride(from: 0, to: x.count, by: 3) { total += abs(Int(x[c]) - Int(y[c])) }
-                count += (x.count + 2) / 3
-                r += 3
+                total += rowDiff(a[lo + r + sh], b[lo + r])
+                count += 1
+                r += 2
             }
-            return Double(total) / Double(max(count, 1))
+            return total / Double(max(count, 1))
         }
-        if cost(0) < 0.5 { return 0 }
+        let still = cost(0)
         var best = 0, bestCost = Double.infinity
-        for s in stride(from: 2, to: h - 10, by: 4) {
-            let c = cost(s)
-            if c < bestCost { bestCost = c; best = s }
+        for sh in stride(from: 2, to: span - 12, by: 3) {
+            let c = cost(sh)
+            if c < bestCost { bestCost = c; best = sh }
         }
-        var lo = max(1, best - 4), hi = min(h - 11, best + 4)
-        if lo > hi { swap(&lo, &hi) }
-        for s in lo...hi {
-            let c = cost(s)
-            if c < bestCost { bestCost = c; best = s }
+        for sh in max(1, best - 3)...min(span - 13, best + 3) {
+            let c = cost(sh)
+            if c < bestCost { bestCost = c; best = sh }
         }
-        return bestCost < 6 ? best : 0
+        guard bestCost < max(4, still * 0.45) else { return (0, top, bottom) }
+        return (best, top, bottom)
+    }
+}
+
+extension String {
+    func appendLine(to url: URL) throws {
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(data(using: .utf8)!); try h.close() } else { try write(to: url, atomically: true, encoding: .utf8) }
     }
 }

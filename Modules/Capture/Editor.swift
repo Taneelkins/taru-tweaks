@@ -2,17 +2,19 @@ import AppKit
 import SwiftUI
 
 enum EditTool: String, CaseIterable {
-    case arrow, rect, line, text, highlight, blur, step, crop, measure, picker
+    case move, pen, arrow, rect, line, text, highlight, blur, step, crop, measure, picker
+    static let editor: [EditTool] = [.pen, .arrow, .rect, .line, .text, .highlight, .blur, .step, .crop, .measure, .picker]
+    static let inPlace: [EditTool] = [.move, .pen, .arrow, .rect, .line, .text, .highlight, .blur, .step, .measure, .picker]
     var icon: String {
-        [.arrow: "arrow.up.right", .rect: "rectangle", .line: "line.diagonal", .text: "textformat", .highlight: "highlighter",
+        [.move: "arrow.up.and.down.and.arrow.left.and.right", .pen: "scribble", .arrow: "arrow.up.right", .rect: "rectangle", .line: "line.diagonal", .text: "textformat", .highlight: "highlighter",
          .blur: "square.grid.3x3.fill", .step: "1.circle", .crop: "crop", .measure: "ruler", .picker: "eyedropper"][self]!
     }
-    var key: String { [.arrow: "A", .rect: "R", .line: "L", .text: "T", .highlight: "H", .blur: "B", .step: "N", .crop: "K", .measure: "M", .picker: "I"][self]! }
-    var title: String { [.arrow: "Arrow", .rect: "Box", .line: "Line", .text: "Text", .highlight: "Highlight", .blur: "Blur", .step: "Step", .crop: "Crop", .measure: "Measure", .picker: "Color"][self]! }
+    var key: String { [.move: "V", .pen: "D", .arrow: "A", .rect: "R", .line: "L", .text: "T", .highlight: "H", .blur: "B", .step: "N", .crop: "K", .measure: "M", .picker: "I"][self]! }
+    var title: String { [.move: "Move", .pen: "Pen", .arrow: "Arrow", .rect: "Box", .line: "Line", .text: "Text", .highlight: "Highlight", .blur: "Blur", .step: "Step", .crop: "Crop", .measure: "Measure", .picker: "Color"][self]! }
 }
 
 enum Mark {
-    case arrow(CGPoint, CGPoint), rect(CGRect), line(CGPoint, CGPoint), text(CGPoint, String), highlight(CGRect), blur(CGRect), step(CGPoint, Int)
+    case pen([CGPoint]), arrow(CGPoint, CGPoint), rect(CGRect), line(CGPoint, CGPoint), text(CGPoint, String), highlight(CGRect), blur(CGRect), step(CGPoint, Int)
 }
 
 struct Annotation {
@@ -79,6 +81,11 @@ final class EditorModel: ObservableObject {
         ctx.setLineJoin(.round)
         ctx.setShadow(offset: .zero, blur: 3 * scale, color: NSColor.black.withAlphaComponent(0.35).cgColor)
         switch a.mark {
+        case .pen(let pts):
+            guard let first = pts.first else { break }
+            ctx.move(to: first)
+            for p in pts.dropFirst() { ctx.addLine(to: p) }
+            ctx.strokePath()
         case .arrow(let p, let q):
             let angle = atan2(q.y - p.y, q.x - p.x)
             let head = max(14 * scale, w * 4)
@@ -242,6 +249,8 @@ final class CanvasView: NSView, NSTextFieldDelegate {
         let r = CGRect(x: min(s.x, p.x), y: min(s.y, p.y), width: abs(p.x - s.x), height: abs(p.y - s.y))
         let c = model.color, w = model.weight
         switch model.tool {
+        case .pen:
+            if case .pen(var pts) = draft?.mark { pts.append(p); draft = Annotation(mark: .pen(pts), color: c, width: w) } else { draft = Annotation(mark: .pen([s, p]), color: c, width: w) }
         case .arrow: draft = Annotation(mark: .arrow(s, p), color: c, width: w)
         case .line: draft = Annotation(mark: .line(s, p), color: c, width: w)
         case .rect: draft = Annotation(mark: .rect(r), color: c, width: w)
@@ -304,15 +313,20 @@ final class CanvasView: NSView, NSTextFieldDelegate {
     }
 
     override func keyDown(with e: NSEvent) {
-        if e.keyCode == 53 { window?.performClose(nil); return }
-        if e.keyCode == 36 || e.keyCode == 76 { (window?.windowController as? EditorController)?.copyAndClose(); return }
+        if !handleKey(e) { super.keyDown(with: e) }
+    }
+
+    func handleKey(_ e: NSEvent) -> Bool {
+        if field != nil { return false }
+        if e.keyCode == 53 { window?.performClose(nil); return true }
+        if e.keyCode == 36 || e.keyCode == 76 { (window?.windowController as? EditorController)?.copyAndClose(); return true }
         if e.modifierFlags.intersection([.command, .control, .option]).isEmpty, let ch = e.charactersIgnoringModifiers?.uppercased() {
-            if let t = EditTool.allCases.first(where: { $0.key == ch }) { model.tool = t; measure = nil; needsDisplay = true; return }
-            if let n = Int(ch), n >= 1, n <= model.palette.count { model.color = model.palette[n - 1]; return }
-            if ch == "P" { (window?.windowController as? EditorController)?.pin(); return }
-            if ch == "O" { (window?.windowController as? EditorController)?.ocr(); return }
+            if let t = EditTool.editor.first(where: { $0.key == ch }) { model.tool = t; measure = nil; needsDisplay = true; return true }
+            if let n = Int(ch), n >= 1, n <= model.palette.count { model.color = model.palette[n - 1]; return true }
+            if ch == "P" { (window?.windowController as? EditorController)?.pin(); return true }
+            if ch == "O" { (window?.windowController as? EditorController)?.ocr(); return true }
         }
-        super.keyDown(with: e)
+        return false
     }
 }
 
@@ -334,14 +348,14 @@ final class EditorController: NSWindowController, NSWindowDelegate {
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
         let vf = screen.visibleFrame
         let pts = CGSize(width: CGFloat(model.image.width) / model.scale, height: CGFloat(model.image.height) / model.scale)
-        let w = min(max(pts.width + 32, 640), vf.width * 0.86), h = min(max(pts.height + 32 + 52, 360), vf.height * 0.86)
+        let w = min(max(pts.width + 32, 980), vf.width * 0.9), h = min(max(pts.height + 32 + 52, 360), vf.height * 0.86)
         let win = NSWindow(contentRect: NSRect(x: vf.midX - w / 2, y: vf.midY - h / 2, width: w, height: h), styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
         win.titlebarAppearsTransparent = true
         win.titleVisibility = .hidden
         win.appearance = NSAppearance(named: .darkAqua)
         win.backgroundColor = NSColor(Palette.pit)
         win.isReleasedWhenClosed = false
-        win.minSize = NSSize(width: 560, height: 320)
+        win.minSize = NSSize(width: 980, height: 360)
         super.init(window: win)
         win.delegate = self
         let canvas = CanvasView(model: model)
@@ -359,11 +373,17 @@ final class EditorController: NSWindowController, NSWindowDelegate {
         win.contentView = stack
         win.makeFirstResponder(canvas)
         observer = model.objectWillChange.sink { [weak canvas] in DispatchQueue.main.async { canvas?.needsDisplay = true } }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak canvas] e in
+            guard let self, let canvas, e.window === self.window, !(self.window?.firstResponder is NSTextView), self.window?.firstResponder !== canvas else { return e }
+            return canvas.handleKey(e) ? nil : e
+        }
     }
+    private var keyMonitor: Any?
 
     required init?(coder: NSCoder) { fatalError() }
 
     func windowWillClose(_ notification: Notification) {
+        if let m = keyMonitor { NSEvent.removeMonitor(m) }
         EditorController.open.removeAll { $0 === self }
     }
 
@@ -416,7 +436,7 @@ struct EditorBar: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(EditTool.allCases, id: \.self) { t in
+            ForEach(EditTool.editor, id: \.self) { t in
                 Button { model.tool = t } label: {
                     Image(systemName: t.icon).font(.system(size: 13, weight: .semibold)).frame(width: 30, height: 26)
                         .foregroundStyle(model.tool == t ? Color.black : Palette.bone)
@@ -432,7 +452,7 @@ struct EditorBar: View {
             }
             Seg(options: [("S", CGFloat(1)), ("M", CGFloat(2)), ("L", CGFloat(4))], value: $model.weight).padding(.leading, 6)
             Spacer()
-            Text(model.info.uppercased()).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash).lineLimit(1)
+            Text(model.info.uppercased()).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash).lineLimit(1).truncationMode(.head).layoutPriority(-1)
             Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward").frame(width: 26, height: 26) }.buttonStyle(.plain).foregroundStyle(Palette.bone).keyboardShortcut("z", modifiers: .command).help("Undo")
             Button { model.redoLast() } label: { Image(systemName: "arrow.uturn.forward").frame(width: 26, height: 26) }.buttonStyle(.plain).foregroundStyle(Palette.bone).keyboardShortcut("z", modifiers: [.command, .shift]).help("Redo")
             Group {
@@ -452,6 +472,7 @@ struct EditorBar: View {
     private func bar(_ title: String, _ key: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title.uppercased()).font(.system(size: 11, weight: .bold, design: .monospaced)).tracking(1)
+                .lineLimit(1).fixedSize()
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .foregroundStyle(theme.accent).overlay(Rectangle().stroke(theme.accent))
         }.buttonStyle(.plain).help("\(title) (\(key))")
