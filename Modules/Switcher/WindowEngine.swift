@@ -199,23 +199,29 @@ final class WindowEngine {
             return
         }
         guard let app = NSRunningApplication(processIdentifier: w.pid) else { return }
-        if app.isHidden { app.unhide() }
-        if w.windowless { app.activate(); return }
-        let el = axWindow(w)
-        if let el, w.minimized { AXUIElementSetAttributeValue(el, kAXMinimizedAttribute as CFString, kCFBooleanFalse) }
-        app.activate(options: [.activateIgnoringOtherApps])
-        AXUIElementSetAttributeValue(AXUIElementCreateApplication(w.pid), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
-        let raise = { [weak self] in
-            guard let self, let e = el ?? self.axWindow(w) else { return }
-            AXUIElementSetAttributeValue(e, kAXMainAttribute as CFString, kCFBooleanTrue)
-            AXUIElementPerformAction(e, kAXRaiseAction as CFString)
-        }
-        raise()
-        if !w.onCurrentSpace || el == nil { DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: raise) }
         mru.removeAll { $0 == w.id }; mru.insert(w.id, at: 0)
-        if SwitcherPrefs.shared.cursorFollows, !w.frame.isEmpty {
-            CGWarpMouseCursorPosition(CGPoint(x: w.frame.midX, y: w.frame.midY))
+        if w.windowless { if app.isHidden { app.unhide() }; app.activate(); return }
+        let fast = !w.minimized && !w.hidden && w.onCurrentSpace && SkyLight.bringToFront(pid: w.pid, window: w.id)
+        let follow = SwitcherPrefs.shared.cursorFollows
+        DispatchQueue.global(qos: .userInteractive).async { [self] in
+            if app.isHidden { app.unhide() }
+            let el = self.axWindow(w)
+            if let el, w.minimized { AXUIElementSetAttributeValue(el, kAXMinimizedAttribute as CFString, kCFBooleanFalse) }
+            if !fast {
+                _ = SkyLight.bringToFront(pid: w.pid, window: w.id)
+                AXUIElementSetAttributeValue(self.appElement(w.pid), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+            }
+            if let el {
+                AXUIElementSetAttributeValue(el, kAXMainAttribute as CFString, kCFBooleanTrue)
+                AXUIElementPerformAction(el, kAXRaiseAction as CFString)
+            }
+            if !fast { DispatchQueue.main.async { app.activate() } }
+            if !w.onCurrentSpace || el == nil {
+                usleep(350_000)
+                if let e = el ?? self.axWindow(w) { AXUIElementPerformAction(e, kAXRaiseAction as CFString) }
+            }
         }
+        if follow, !w.frame.isEmpty { CGWarpMouseCursorPosition(CGPoint(x: w.frame.midX, y: w.frame.midY)) }
     }
 
     func close(_ w: Win) {

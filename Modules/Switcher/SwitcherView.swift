@@ -89,9 +89,9 @@ struct Tile: View {
             .shadow(color: selected ? theme.accent.opacity(0.65) : .clear, radius: 10)
             .overlay(alignment: .topTrailing) { badge }
             .scaleEffect(selected ? 1.025 : 1)
-            .animation(.easeOut(duration: 0.07), value: selected)
+            .animation(s.mouseMoved ? nil : .easeOut(duration: 0.07), value: selected)
             .contentShape(Rectangle())
-            .onHover { h in hovering = h; if h && prefs.hoverSelects && s.mouseMoved { s.select(index) } }
+            .onHover { h in guard s.visible else { return }; hovering = h; if h && prefs.hoverSelects && s.mouseMoved && s.selected != index { s.select(index) } }
             .onTapGesture { s.select(index); s.commit() }
     }
 

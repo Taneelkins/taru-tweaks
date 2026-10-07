@@ -34,6 +34,32 @@ enum SkyLight {
         return (current, index)
     }
 
+    typealias FrontFn = @convention(c) (UnsafePointer<ProcessSerialNumber>, CGWindowID, UInt32) -> CGError
+    typealias PostFn = @convention(c) (UnsafePointer<ProcessSerialNumber>, UnsafePointer<UInt8>) -> CGError
+    typealias PSNFn = @convention(c) (pid_t, UnsafeMutablePointer<ProcessSerialNumber>) -> OSStatus
+    static let setFront = fn("_SLPSSetFrontProcessWithOptions", FrontFn.self)
+    static let postEvent = fn("SLPSPostEventRecordTo", PostFn.self)
+    static let psnFor: PSNFn? = dlsym(dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", RTLD_LAZY), "GetProcessForPID").map { unsafeBitCast($0, to: PSNFn.self) }
+
+    @discardableResult
+    static func bringToFront(pid: pid_t, window: CGWindowID) -> Bool {
+        guard let setFront, let psnFor else { return false }
+        var psn = ProcessSerialNumber()
+        guard psnFor(pid, &psn) == noErr else { return false }
+        guard setFront(&psn, window, 0x200) == .success else { return false }
+        if let postEvent {
+            var bytes = [UInt8](repeating: 0, count: 0xf8)
+            bytes[0x04] = 0xf8
+            bytes[0x3a] = 0x10
+            var wid = window
+            withUnsafeBytes(of: &wid) { for i in 0..<4 { bytes[0x3c + i] = $0[i] } }
+            for i in 0x20..<0x30 { bytes[i] = 0xff }
+            bytes[0x08] = 0x01; _ = postEvent(&psn, bytes)
+            bytes[0x08] = 0x02; _ = postEvent(&psn, bytes)
+        }
+        return true
+    }
+
     static let cmd: UInt32 = 0x100000, opt: UInt32 = 0x80000, shift: UInt32 = 0x20000
     static func moveNativeSwitcherToOption() {
         _ = setHotKey?(1, 0xFFFF, 48, opt); _ = enableHotKey?(1, true)

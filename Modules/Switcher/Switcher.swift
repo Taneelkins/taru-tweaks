@@ -51,6 +51,7 @@ final class Switcher: ObservableObject {
             p.backgroundColor = .clear
             p.hasShadow = false
             p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+            p.animationBehavior = .none
             p.contentView = NSHostingView(rootView: SwitcherView().environmentObject(self).environmentObject(SwitcherPrefs.shared))
             panel = p
         }
@@ -95,6 +96,7 @@ final class Switcher: ObservableObject {
         let target = windows.indices.contains(selected) ? windows[selected] : nil
         hide()
         if let target { WindowEngine.shared.focus(target) }
+        DispatchQueue.main.async { self.windows = []; self.all = [] }
     }
 
     func cancel() { hide() }
@@ -102,8 +104,10 @@ final class Switcher: ObservableObject {
     func hide() {
         visible = false
         showTimer?.invalidate()
+        panel?.alphaValue = 0
         panel?.orderOut(nil)
         outline?.orderOut(nil)
+        outlined = 0
         searching = false
     }
 
@@ -171,9 +175,12 @@ final class Switcher: ObservableObject {
 
     var currentColumns: Int { SwitcherView.columns(count: windows.count, prefs: SwitcherPrefs.shared, screen: targetScreen.visibleFrame.width) }
 
+    private var outlined: CGWindowID = 0
     func updateOutline() {
-        guard SwitcherPrefs.shared.previewWindow, visible, windows.indices.contains(selected) else { outline?.orderOut(nil); return }
+        guard SwitcherPrefs.shared.previewWindow, visible, windows.indices.contains(selected) else { outline?.orderOut(nil); outlined = 0; return }
         let w = windows[selected]
+        if w.id == outlined, outline?.isVisible == true { return }
+        outlined = w.id
         guard !w.minimized, !w.windowless, w.onCurrentSpace, !w.hidden, !w.frame.isEmpty else { outline?.orderOut(nil); return }
         let h = NSScreen.screens.first?.frame.height ?? 0
         let rect = NSRect(x: w.frame.minX, y: h - w.frame.maxY, width: w.frame.width, height: w.frame.height)
@@ -182,6 +189,7 @@ final class Switcher: ObservableObject {
             o.isOpaque = false; o.backgroundColor = .clear; o.ignoresMouseEvents = true; o.hasShadow = false
             o.level = .floating
             o.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
+            o.animationBehavior = .none
             o.contentView = NSHostingView(rootView: OutlineView())
             outline = o
         }
@@ -193,6 +201,9 @@ final class Switcher: ObservableObject {
 struct OutlineView: View {
     @ObservedObject var theme = Theme.shared
     var body: some View {
-        Rectangle().fill(theme.accent.opacity(0.07)).overlay(Rectangle().stroke(theme.accent, lineWidth: 3)).shadow(color: theme.accent.opacity(0.8), radius: 12)
+        Rectangle().fill(theme.accent.opacity(0.06))
+            .overlay(Rectangle().stroke(theme.accent, lineWidth: 3))
+            .overlay(Rectangle().stroke(theme.accent.opacity(0.35), lineWidth: 9).padding(-3))
+            .drawingGroup()
     }
 }
