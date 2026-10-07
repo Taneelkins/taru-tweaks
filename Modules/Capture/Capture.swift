@@ -61,7 +61,7 @@ final class CapturePrefs: ObservableObject {
         magnifier = d.object(forKey: "cap.loupe") as? Bool ?? true
         copy = d.object(forKey: "cap.copy") as? Bool ?? true
         save = d.object(forKey: "cap.save") as? Bool ?? true
-        sound = d.object(forKey: "cap.sound") as? Bool ?? true
+        sound = d.object(forKey: "cap.sound") as? Bool ?? false
         let system = UserDefaults(suiteName: "com.apple.screencapture")?.string(forKey: "location")
         folder = d.string(forKey: "cap.folder") ?? system ?? (NSHomeDirectory() + "/Pictures/Screenshots")
     }

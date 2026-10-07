@@ -19,7 +19,13 @@ final class TaruStatusItem: NSObject {
         popover.behavior = .transient
         popover.animates = false
         popover.appearance = NSAppearance(named: .darkAqua)
-        popover.contentViewController = NSHostingController(rootView: content)
+        let host = NSHostingView(rootView: AnyView(content.fixedSize()))
+        host.layoutSubtreeIfNeeded()
+        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        let vc = NSViewController()
+        vc.view = host
+        popover.contentViewController = vc
+        popover.contentSize = host.fittingSize
         item.button?.target = self
         item.button?.action = #selector(clicked)
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -46,6 +52,7 @@ final class TaruStatusItem: NSObject {
         if popover.isShown { close(); return }
         guard let b = item.button else { return }
         NSApp.activate(ignoringOtherApps: true)
+        if let v = popover.contentViewController?.view { v.layoutSubtreeIfNeeded(); popover.contentSize = v.fittingSize }
         popover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         outside = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.close() }

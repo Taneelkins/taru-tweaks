@@ -273,7 +273,7 @@ struct MainMenu: View {
                 Button("Quit") { NSApp.terminate(nil) }.buttonStyle(.plain).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.ash)
             }
         }
-        .padding(16).frame(width: 300).background(Palette.pit).tint(theme.accent)
+        .padding(16).frame(width: 360).background(Palette.pit).tint(theme.accent)
     }
     func row(_ t: String, _ d: String, _ b: Binding<Bool>) -> some View {
         HStack {
