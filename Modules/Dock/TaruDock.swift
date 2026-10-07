@@ -1157,7 +1157,6 @@ struct WindowPicker: View {
     var body: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.fixed(180), spacing: 10, alignment: .top), count: min(max(model.wins.count, 1), 4)), spacing: 12) {
             ForEach(model.wins) { w in
-                Button { pick(w) } label: {
                     VStack(alignment: .leading, spacing: 6) {
                         ZStack {
                             Rectangle().fill(Color.black)
@@ -1203,8 +1202,8 @@ struct WindowPicker: View {
                                 .foregroundStyle(theme.accent).lineLimit(1).frame(width: 180, alignment: .leading)
                         }
                     }
-                }
-                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .onTapGesture { pick(w) }
                 .onHover { hover = $0 ? w.id : (hover == w.id ? nil : hover) }
                 .transition(.scale(scale: 0.8).combined(with: .opacity))
             }
