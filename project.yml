@@ -1,0 +1,62 @@
+name: TaruTweaks
+options:
+  bundleIdPrefix: com.taru
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "406A561CA32DEA4B4713C3ABA5A453E9AB1DF475"
+    DEVELOPMENT_TEAM: A734F6NRJG
+    ENABLE_HARDENED_RUNTIME: NO
+    ENABLE_APP_SANDBOX: NO
+targets:
+  TaruTweaksHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Helper
+        excludes: ["*.plist"]
+      - path: Shared/BatteryProtocol.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.taru.tweaks.helper
+        SWIFT_OBJC_BRIDGING_HEADER: Helper/smc.h
+        SKIP_INSTALL: YES
+  TaruTweaks:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+      - path: Shared
+      - path: Modules
+      - path: Resources/AppIcon.icns
+        buildPhase: resources
+      - path: Helper/com.taru.tweaks.helper.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchDaemons
+    dependencies:
+      - target: TaruTweaksHelper
+        embed: true
+        copy:
+          destination: executables
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleName: Taru Tweaks
+        CFBundleDisplayName: Taru Tweaks
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        LSUIElement: true
+        CFBundleIconFile: AppIcon
+        NSHumanReadableCopyright: "Taru · personal build"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.taru.tweaks
+        PRODUCT_NAME: "Taru Tweaks"
+        GENERATE_INFOPLIST_FILE: NO
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"

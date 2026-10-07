@@ -1,0 +1,303 @@
+import SwiftUI
+import AppKit
+import ServiceManagement
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static var shared: AppDelegate!
+    var retry: Timer?
+    var settings: NSWindow?
+    var dashboard: NSWindow?
+    var taskManager: NSWindow?
+    let nav = Nav()
+
+    func updateDockIcon() {
+        let any = [settings, dashboard, taskManager].contains { $0?.isVisible == true }
+        let policy: NSApplication.ActivationPolicy = (any || UserDefaults.standard.bool(forKey: "dock.always")) ? .regular : .accessory
+        if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+        if policy == .regular { NSApp.activate(ignoringOtherApps: true) }
+    }
+
+    func present(_ w: NSWindow?) {
+        updateDockIcon()
+        NSApp.activate(ignoringOtherApps: true)
+        w?.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { self.updateDockIcon() }
+    }
+
+    func makeWindow(_ title: String, _ size: NSSize, _ view: some View) -> NSWindow {
+        let w = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
+        w.titlebarAppearsTransparent = true; w.titleVisibility = .hidden; w.isReleasedWhenClosed = false; w.title = title
+        w.contentView = NSHostingView(rootView: view)
+        w.center()
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { [weak self] _ in
+            DispatchQueue.main.async { self?.updateDockIcon() }
+        }
+        return w
+    }
+
+    func openTaskManager() {
+        if taskManager == nil { taskManager = makeWindow("Task Manager", NSSize(width: 980, height: 680), TaskManagerView()) }
+        present(taskManager)
+    }
+
+    func registerTaskManagerKey() {
+        let d = UserDefaults.standard
+        let mask = (d.object(forKey: "tm.mask") as? NSNumber)?.uint64Value ?? 0x60000
+        let key = (d.object(forKey: "tm.key") as? NSNumber)?.int64Value ?? 53
+        HotKeys.shared.set(201, mask: mask, key: key) { [weak self] in self?.openTaskManager() }
+    }
+
+    func applicationDidFinishLaunching(_ n: Notification) {
+        AppDelegate.shared = self
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.25)
+        if !AXIsProcessTrusted() { AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary) }
+        if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
+        WindowEngine.shared.start()
+        Thumbnails.shared.onUpdate = { Switcher.shared.tick += 1 }
+        Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { _ in if CGPreflightScreenCaptureAccess() { WindowEngine.shared.snapshotVisible() } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { WindowEngine.shared.snapshotVisible() }
+        Input.shared.onLost = { [weak self] in self?.arm() }
+        arm()
+        Gestures.shared.start()
+        _ = BatteryModel.shared
+        _ = Brightness.shared
+        debugHooks()
+        registerTaskManagerKey()
+        updateDockIcon()
+        for sig in [SIGTERM, SIGINT] {
+            signal(sig, SIG_IGN)
+            let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            src.setEventHandler { Brightness.shared.stop(); SkyLight.restoreNativeSwitcher(); exit(0) }
+            src.resume(); _ = Unmanaged.passRetained(src)
+        }
+        if !UserDefaults.standard.bool(forKey: "onboarded") {
+            UserDefaults.standard.set(true, forKey: "onboarded")
+            try? SMAppService.mainApp.register()
+            openSettings("general")
+        }
+    }
+
+    func arm() {
+        if AXIsProcessTrusted(), Input.shared.start() {
+            if SwitcherPrefs.shared.enabled { SkyLight.moveNativeSwitcherToOption() }
+            retry?.invalidate(); return
+        }
+        retry?.invalidate()
+        retry = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in self?.arm() }
+    }
+
+    func debugHooks() {
+        let dc = DistributedNotificationCenter.default()
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { _ in DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { WindowEngine.shared.snapshotVisible() } }
+        dc.addObserver(forName: .init("com.taru.tweaks.peek"), object: nil, queue: .main) { _ in
+            Switcher.shared.open(shortcut: 0, backwards: false, gesture: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { Switcher.shared.cancel() }
+        }
+        dc.addObserver(forName: .init("com.taru.tweaks.status"), object: nil, queue: .main) { _ in
+            let wins = WindowEngine.shared.all()
+            let st: [String: Any] = ["accessibility": AXIsProcessTrusted(), "screenRecording": CGPreflightScreenCaptureAccess(), "tapActive": Input.shared.active,
+                                     "windows": wins.count, "titled": wins.filter { !$0.title.isEmpty }.count, "thumbs": Thumbnails.shared.count,
+                                     "helper": BatteryModel.shared.helperState.rawValue, "helperAlive": BatteryModel.shared.helperAlive, "xdr": Brightness.shared.supported]
+            if let d = try? JSONSerialization.data(withJSONObject: st) { try? d.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-status.json")) }
+        }
+        dc.addObserver(forName: .init("com.taru.tweaks.open"), object: nil, queue: .main) { [weak self] n in
+            if (n.object as? String) == "taskmanager" { self?.openTaskManager() } else { self?.openSettings((n.object as? String) ?? "general") }
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool { openSettings(nil); return true }
+    func applicationWillTerminate(_ n: Notification) { SkyLight.restoreNativeSwitcher() }
+
+    func openSettings(_ page: String?) {
+        if let page { nav.page = page }
+        if settings == nil { settings = makeWindow("Taru Tweaks", NSSize(width: 900, height: 660), SettingsRoot().environmentObject(nav)) }
+        present(settings)
+    }
+
+    func openDashboard() {
+        if dashboard == nil { dashboard = makeWindow("Battery", NSSize(width: 960, height: 720), DashboardWindow()) }
+        present(dashboard)
+    }
+}
+
+final class Nav: ObservableObject { @Published var page = "general" }
+
+struct SettingsRoot: View {
+    @EnvironmentObject var nav: Nav
+    let groups = [
+        SidebarGroup(id: "Taru Tweaks", items: [SidebarItem(id: "general", title: "General", icon: "square.grid.2x2"), SidebarItem(id: "theme", title: "Theme", icon: "paintpalette")]),
+        SidebarGroup(id: "Windows", items: [SidebarItem(id: "switcher.shortcuts", title: "Switcher", icon: "rectangle.on.rectangle"), SidebarItem(id: "switcher.appearance", title: "Look", icon: "square.grid.3x2"),
+                                           SidebarItem(id: "switcher.controls", title: "Controls", icon: "keyboard"), SidebarItem(id: "switcher.exceptions", title: "Exceptions", icon: "nosign"),
+                                           SidebarItem(id: "desktop", title: "Desktop", icon: "menubar.dock.rectangle")]),
+        SidebarGroup(id: "Battery", items: [SidebarItem(id: "battery.charging", title: "Charging", icon: "bolt"), SidebarItem(id: "battery.protection", title: "Protection", icon: "thermometer.medium"),
+                                           SidebarItem(id: "battery.automation", title: "Automation", icon: "calendar.badge.clock"), SidebarItem(id: "battery.display", title: "Dashboard", icon: "chart.xyaxis.line")]),
+        SidebarGroup(id: "Display", items: [SidebarItem(id: "brightness", title: "XDR Boost", icon: "sun.max")]),
+        SidebarGroup(id: "System", items: [SidebarItem(id: "taskmanager", title: "Task Manager", icon: "list.bullet.rectangle")]),
+        SidebarGroup(id: "Passwords", items: [SidebarItem(id: "vault", title: "Bitwarden Bridge", icon: "key")])
+    ]
+    var body: some View {
+        TweaksShell(groups: groups, current: $nav.page) { page in
+            switch page {
+            case "general": GeneralPage()
+            case "theme": VStack(alignment: .leading, spacing: 0) { PageTitle(title: "Theme", subtitle: "One accent color for every module."); ThemePicker() }
+            case let p where p.hasPrefix("switcher") || p == "desktop": SwitcherSettings(page: p)
+            case let p where p.hasPrefix("battery"): BatterySettings(page: p)
+            case "brightness": BrightnessSettings()
+            case "taskmanager": TaskManagerSettings()
+            default: VStack(alignment: .leading) { PageTitle(title: "Bitwarden Bridge", subtitle: "Type logins from your Bitwarden vault into any app with a shortcut and Touch ID. Coming next.") }
+            }
+        }
+    }
+}
+
+struct GeneralPage: View {
+    @State var trusted = AXIsProcessTrusted()
+    @State var capture = CGPreflightScreenCaptureAccess()
+    @State var login = SMAppService.mainApp.status == .enabled
+    @State var dockAlways = UserDefaults.standard.bool(forKey: "dock.always")
+    @ObservedObject var switcher = SwitcherPrefs.shared
+    @ObservedObject var battery = BatteryModel.shared
+    @ObservedObject var bright = Brightness.shared
+    @ObservedObject var theme = Theme.shared
+    let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+
+    func ok(_ on: Bool) -> some View {
+        Text(on ? "GRANTED" : "NEEDED").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(on ? theme.accent : Palette.ash)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PageTitle(title: "Taru Tweaks", subtitle: "Window switcher, desktop tricks, battery control and XDR boost in one app with one set of permissions.")
+            SectionLabel(text: "Permissions")
+            SettingRow(title: "Accessibility", detail: "Shortcuts, window control, Dock right-click") {
+                HStack { ok(trusted); if !trusted { TweakButton(title: "Open") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!) } } }
+            }
+            SettingRow(title: "Screen Recording", detail: "Live window previews and titles") {
+                HStack { ok(capture); if !capture { TweakButton(title: "Open") { CGRequestScreenCaptureAccess(); NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!) } } }
+            }
+            SettingRow(title: "Charging helper", detail: battery.helperAlive ? "Running" : "Needed for the Battery module") {
+                HStack { ok(battery.helperAlive); if !battery.helperAlive { TweakButton(title: battery.helperState == .requiresApproval ? "Approve" : "Install") { battery.installHelper() } } }
+            }
+            SectionLabel(text: "Modules")
+            SettingRow(title: "Window switcher", detail: "⌘⇥ and friends") { Switch(on: $switcher.enabled) }
+            SettingRow(title: "Show Desktop", detail: "\(modifierString(switcher.desktopMask))\(keyString(switcher.desktopKey))") { Switch(on: $switcher.showDesktop) }
+            SettingRow(title: "Dock right-click Force Quit") { Switch(on: $switcher.dockForceQuit) }
+            SettingRow(title: "Battery control") { Switch(on: Binding(get: { battery.config.enabled }, set: { v in battery.update { $0.enabled = v } })) }
+            SettingRow(title: "XDR Boost") { Switch(on: $bright.on) }
+            SectionLabel(text: "App")
+            SettingRow(title: "Always show in the Dock", detail: "Otherwise the Dock icon only appears while a Taru Tweaks window is open") {
+                Switch(on: Binding(get: { dockAlways }, set: { dockAlways = $0; UserDefaults.standard.set($0, forKey: "dock.always"); AppDelegate.shared.updateDockIcon() }))
+            }
+            SettingRow(title: "Launch at login") {
+                Switch(on: Binding(get: { login }, set: { v in login = v; if v { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() } }))
+            }
+            SettingRow(title: "Version", detail: "Personal build · \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")") { TweakButton(title: "Quit") { NSApp.terminate(nil) } }
+        }
+        .onReceive(timer) { _ in trusted = AXIsProcessTrusted(); capture = CGPreflightScreenCaptureAccess() }
+    }
+}
+
+struct MainMenu: View {
+    @ObservedObject var switcher = SwitcherPrefs.shared
+    @ObservedObject var battery = BatteryModel.shared
+    @ObservedObject var bright = Brightness.shared
+    @ObservedObject var theme = Theme.shared
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("TARU").font(.system(size: 18, weight: .heavy, design: .monospaced)).tracking(3)
+                Text("TWEAKS").font(.system(size: 11, weight: .bold, design: .monospaced)).tracking(4).opacity(0.8)
+            }.foregroundStyle(theme.accent)
+            row("Window switcher", "⌘⇥ · ⌥⇥ macOS", $switcher.enabled)
+            row("Show Desktop", "\(modifierString(switcher.desktopMask))\(keyString(switcher.desktopKey))", $switcher.showDesktop)
+            row("XDR Boost", "\(bright.nits) nits", $bright.on)
+            HStack { Text("Task Manager").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.bone); Spacer(); Text("⌃⇧Esc").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash) }
+            row("Battery limit", "\(battery.battery.percent)% · \(battery.status?.reason ?? "helper off")", Binding(get: { battery.config.enabled }, set: { v in battery.update { $0.enabled = v } }))
+            HStack(spacing: 8) {
+                TweakButton(title: "Settings") { AppDelegate.shared.openSettings(nil) }
+                TweakButton(title: "Battery") { AppDelegate.shared.openDashboard() }
+                TweakButton(title: "Tasks") { AppDelegate.shared.openTaskManager() }
+                Spacer()
+                Button("Quit") { NSApp.terminate(nil) }.buttonStyle(.plain).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.ash)
+            }
+        }
+        .padding(16).frame(width: 300).background(Palette.pit).tint(theme.accent)
+    }
+    func row(_ t: String, _ d: String, _ b: Binding<Bool>) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(t).font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.bone)
+                Text(d).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash).lineLimit(1)
+            }
+            Spacer()
+            Toggle("", isOn: b).toggleStyle(.switch).labelsHidden().controlSize(.small)
+        }
+    }
+}
+
+final class MenuItems: ObservableObject {
+    static let shared = MenuItems()
+    @Published var main: Bool
+    @Published var battery: Bool
+    @Published var brightness: Bool
+    init() {
+        let d = UserDefaults.standard
+        main = d.object(forKey: "menu.main") as? Bool ?? true
+        battery = d.object(forKey: "battery.menu.show") as? Bool ?? true
+        brightness = d.object(forKey: "brightness.menu") as? Bool ?? true
+    }
+    func binding(_ kp: ReferenceWritableKeyPath<MenuItems, Bool>, _ key: String) -> Binding<Bool> {
+        Binding(get: { self[keyPath: kp] }, set: { v in
+            guard v != self[keyPath: kp] else { return }
+            self[keyPath: kp] = v
+            UserDefaults.standard.set(v, forKey: key)
+        })
+    }
+}
+
+struct BatteryLabel: View {
+    @ObservedObject var battery = BatteryModel.shared
+    var body: some View {
+        HStack(spacing: 3) {
+            if battery.menuIcon { Image(systemName: battery.menuSymbol) }
+            if !battery.menuText.isEmpty { Text(battery.menuText) }
+        }
+    }
+}
+
+struct BrightnessLabel: View {
+    @ObservedObject var bright = Brightness.shared
+    var body: some View { Image(systemName: bright.on ? "sun.max.fill" : "sun.max") }
+}
+
+@main
+struct TaruTweaksApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    @ObservedObject var items = MenuItems.shared
+
+    var body: some Scene {
+        MenuBarExtra(isInserted: items.binding(\.main, "menu.main")) { MainMenu() } label: { Image(systemName: "flame.fill") }
+            .menuBarExtraStyle(.window)
+        MenuBarExtra(isInserted: items.binding(\.battery, "battery.menu.show")) {
+            BatteryMenuView(openDashboard: { AppDelegate.shared.openDashboard() }, openSettings: { AppDelegate.shared.openSettings("battery.charging") })
+        } label: { BatteryLabel() }
+        .menuBarExtraStyle(.window)
+        MenuBarExtra(isInserted: items.binding(\.brightness, "brightness.menu")) { BrightnessMenu(openSettings: { AppDelegate.shared.openSettings("brightness") }) } label: { BrightnessLabel() }
+        .menuBarExtraStyle(.window)
+    }
+}
+
+struct TaskManagerSettings: View {
+    @State var mask: UInt64 = (UserDefaults.standard.object(forKey: "tm.mask") as? NSNumber)?.uint64Value ?? 0x60000
+    @State var key: Int64 = (UserDefaults.standard.object(forKey: "tm.key") as? NSNumber)?.int64Value ?? 53
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PageTitle(title: "Task Manager", subtitle: "Processes, live performance graphs and startup apps, like Windows Task Manager.")
+            SettingRow(title: "Shortcut", detail: "Windows uses Ctrl+Shift+Esc") {
+                KeyRecorder(mask: Binding(get: { mask }, set: { mask = $0; UserDefaults.standard.set($0, forKey: "tm.mask"); AppDelegate.shared.registerTaskManagerKey() }),
+                            key: Binding(get: { key }, set: { key = $0; UserDefaults.standard.set($0, forKey: "tm.key"); AppDelegate.shared.registerTaskManagerKey() }))
+            }
+            SettingRow(title: "Open Task Manager") { TweakButton(title: "Open") { AppDelegate.shared.openTaskManager() } }
+        }
+    }
+}

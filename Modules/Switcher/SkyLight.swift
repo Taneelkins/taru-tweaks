@@ -1,0 +1,48 @@
+import Foundation
+import CoreGraphics
+
+enum SkyLight {
+    static let handle = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
+    static func fn<T>(_ name: String, _ type: T.Type) -> T? { dlsym(handle, name).map { unsafeBitCast($0, to: type) } }
+
+    typealias ConnFn = @convention(c) () -> Int32
+    typealias SpacesForWindowsFn = @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
+    typealias DisplaySpacesFn = @convention(c) (Int32) -> Unmanaged<CFArray>?
+    typealias SetHotKeyFn = @convention(c) (Int32, UInt16, UInt16, UInt32) -> CGError
+    typealias EnableHotKeyFn = @convention(c) (Int32, Bool) -> CGError
+
+    static let connection: Int32 = fn("SLSMainConnectionID", ConnFn.self)?() ?? 0
+    static let spacesForWindows = fn("SLSCopySpacesForWindows", SpacesForWindowsFn.self)
+    static let displaySpaces = fn("SLSCopyManagedDisplaySpaces", DisplaySpacesFn.self)
+    static let setHotKey = fn("CGSSetSymbolicHotKeyValue", SetHotKeyFn.self)
+    static let enableHotKey = fn("CGSSetSymbolicHotKeyEnabled", EnableHotKeyFn.self)
+
+    static func spaces(of window: CGWindowID) -> [UInt64] {
+        guard let f = spacesForWindows, let r = f(connection, 7, [window] as CFArray)?.takeRetainedValue() as? [NSNumber] else { return [] }
+        return r.map(\.uint64Value)
+    }
+
+    static func spaceIndex() -> (current: Set<UInt64>, index: [UInt64: Int]) {
+        guard let f = displaySpaces, let displays = f(connection)?.takeRetainedValue() as? [[String: Any]] else { return ([], [:]) }
+        var current = Set<UInt64>(), index: [UInt64: Int] = [:], n = 1
+        for d in displays {
+            if let c = d["Current Space"] as? [String: Any], let id = (c["id64"] as? NSNumber)?.uint64Value { current.insert(id) }
+            for s in d["Spaces"] as? [[String: Any]] ?? [] {
+                if let id = (s["id64"] as? NSNumber)?.uint64Value { index[id] = n; n += 1 }
+            }
+        }
+        return (current, index)
+    }
+
+    static let cmd: UInt32 = 0x100000, opt: UInt32 = 0x80000, shift: UInt32 = 0x20000
+    static func moveNativeSwitcherToOption() {
+        _ = setHotKey?(1, 0xFFFF, 48, opt); _ = enableHotKey?(1, true)
+        _ = setHotKey?(2, 0xFFFF, 48, opt | shift); _ = enableHotKey?(2, true)
+        _ = enableHotKey?(27, false)
+    }
+    static func restoreNativeSwitcher() {
+        _ = setHotKey?(1, 0xFFFF, 48, cmd); _ = enableHotKey?(1, true)
+        _ = setHotKey?(2, 0xFFFF, 48, cmd | shift); _ = enableHotKey?(2, true)
+        _ = enableHotKey?(27, true)
+    }
+}
