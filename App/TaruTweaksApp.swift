@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Gestures.shared.start()
         _ = BatteryModel.shared
         _ = Brightness.shared
-        _ = DockPresets.shared
+        TaruDock.shared.start()
         debugHooks()
         registerTaskManagerKey()
         MenuBarManager.registerKey()
@@ -134,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                      "selectedTitle": sw.windows.indices.contains(sw.selected) ? "\(sw.windows[sw.selected].appName) | \(sw.windows[sw.selected].title)" : "",
                                      "front": NSWorkspace.shared.frontmostApplication?.localizedName ?? "",
                                      "native1": SkyLight.hotKeyValue(1), "native27": SkyLight.hotKeyEnabled(27),
-                                     "dockPreset": DockPresets.shared.activeName, "dockCount": DockPresets.shared.presets.count, "xdrOn": Brightness.shared.on, "xdrFactor": Brightness.shared.factor, "xdrNote": Brightness.shared.note]
+                                     "dockPreset": DockPresets.shared.activeName, "dockCount": DockPresets.shared.presets.count, "dockShown": TaruDock.shared.shown, "dockFrame": NSStringFromRect(TaruDock.shared.panel.frame), "xdrOn": Brightness.shared.on, "xdrFactor": Brightness.shared.factor, "xdrNote": Brightness.shared.note]
             if let d = try? JSONSerialization.data(withJSONObject: st, options: .prettyPrinted) { try? d.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-state.json")) }
         }
         dc.addObserver(forName: .init("com.taru.tweaks.notifytest"), object: nil, queue: .main) { _ in
@@ -173,7 +173,7 @@ struct SettingsRoot: View {
         SidebarGroup(id: "Taru Tweaks", items: [SidebarItem(id: "general", title: "General", icon: "square.grid.2x2"), SidebarItem(id: "menubar", title: "Menu Bar", icon: "menubar.rectangle"), SidebarItem(id: "theme", title: "Theme", icon: "paintpalette")]),
         SidebarGroup(id: "Windows", items: [SidebarItem(id: "switcher.shortcuts", title: "Switcher", icon: "rectangle.on.rectangle"), SidebarItem(id: "switcher.appearance", title: "Look", icon: "square.grid.3x2"),
                                            SidebarItem(id: "switcher.controls", title: "Controls", icon: "keyboard"), SidebarItem(id: "switcher.exceptions", title: "Exceptions", icon: "nosign"),
-                                           SidebarItem(id: "desktop", title: "Desktop", icon: "menubar.dock.rectangle"), SidebarItem(id: "dock", title: "Dock Presets", icon: "dock.rectangle")]),
+                                           SidebarItem(id: "desktop", title: "Desktop", icon: "menubar.dock.rectangle"), SidebarItem(id: "dock", title: "Taru Dock", icon: "dock.rectangle")]),
         SidebarGroup(id: "Battery", items: [SidebarItem(id: "battery.charging", title: "Charging", icon: "bolt"), SidebarItem(id: "battery.protection", title: "Protection", icon: "thermometer.medium"),
                                            SidebarItem(id: "battery.automation", title: "Automation", icon: "calendar.badge.clock"), SidebarItem(id: "battery.display", title: "Dashboard", icon: "chart.xyaxis.line")]),
         SidebarGroup(id: "Display", items: [SidebarItem(id: "brightness", title: "XDR Boost", icon: "sun.max")])
