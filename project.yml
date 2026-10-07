@@ -32,6 +32,7 @@ targets:
       - path: App
       - path: Shared
       - path: Modules
+        excludes: ["TaskManager/**"]
       - path: Resources/AppIcon.icns
         buildPhase: resources
       - path: Helper/com.taru.tweaks.helper.plist
@@ -60,3 +61,27 @@ targets:
         PRODUCT_NAME: "Taru Tweaks"
         GENERATE_INFOPLIST_FILE: NO
         LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+  TaskManager:
+    type: application
+    platform: macOS
+    sources:
+      - path: TaskManagerApp
+      - path: Modules/TaskManager
+      - path: Shared/Theme.swift
+      - path: Shared/SettingsKit.swift
+      - path: Resources/TaskManager.icns
+        buildPhase: resources
+    info:
+      path: Resources/TaskManager-Info.plist
+      properties:
+        CFBundleName: Task Manager
+        CFBundleDisplayName: Task Manager
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        CFBundleIconFile: TaskManager
+        NSHumanReadableCopyright: "Taru · personal build"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.taru.taskmanager
+        PRODUCT_NAME: "Task Manager"
+        GENERATE_INFOPLIST_FILE: NO

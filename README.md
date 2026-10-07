@@ -9,15 +9,17 @@ Personal macOS utility for a MacBook Pro (M5, macOS 26). One app, one set of per
 | **Battery** | AlDente Pro | Charge limit, sailing, discharge, auto-discharge, top up, heat protection, calibration, stop charging asleep, stay awake until limit, clamshell discharge, MagSafe LED, power modes, schedules + history, notifications, dashboard with Sankey power flow, Apple Shortcuts actions. Root helper uses the M5 SMC keys `CHTE` / `CHIE` / `ACLC`. |
 | **XDR Boost** | BrightIntosh | Up to 1000 nits everywhere, custom shortcuts, battery/heat cut-offs, timer, auto-on with charger, external XDR displays. |
 | **Bitwarden Bridge** | Bitwarden autofill on iPhone | ⌃⌘L fills the matching login into any app (username, Tab, password), ⌃⌥⌘L searchable picker, ⌃⌘O types the 2FA code. Official `bw` CLI underneath; master password in the Keychain behind Touch ID; auto-lock on timeout, sleep and screen lock; per-app memory. |
-| **Task Manager** | Windows Task Manager | Processes grouped by app, CPU/memory, not-responding detection, End task / Force quit / process tree, live CPU/GPU/memory/network/disk graphs, startup items. ⌃⇧Esc. |
+| **Task Manager** *(standalone app)* | Windows Task Manager | Processes grouped by app, CPU/memory, not-responding detection, End task / Force quit / process tree, live CPU/GPU/memory/network/disk graphs, startup items. ⌃⇧Esc. |
+
+Two apps are built from this repo: **Taru Tweaks** (menu bar, all modules) and **Task Manager** (standalone, Dock app). Taru Tweaks owns the ⌃⇧Esc shortcut and launches Task Manager.
 
 ## Build
 
 ```
 brew install xcodegen
 xcodegen generate
-xcodebuild -project TaruTweaks.xcodeproj -scheme TaruTweaks -configuration Release -derivedDataPath build build
-cp -R "build/Build/Products/Release/Taru Tweaks.app" /Applications/
+for s in TaruTweaks TaskManager; do xcodebuild -project TaruTweaks.xcodeproj -scheme $s -configuration Release -derivedDataPath build build; done
+cp -R "build/Build/Products/Release/Taru Tweaks.app" "build/Build/Products/Release/Task Manager.app" /Applications/
 ```
 
 Signing uses the local Apple Development certificate (see `project.yml`). Keep the same certificate so Accessibility / Screen Recording grants survive rebuilds.
@@ -25,6 +27,7 @@ Signing uses the local Apple Development certificate (see `project.yml`). Keep t
 ## Layout
 
 - `App/` app shell, menu bar items, settings window, Shortcuts intents
-- `Modules/` Switcher, Battery, Brightness, TaskManager
+- `Modules/` Switcher, Battery, Brightness, Vault, TaskManager
+- `TaskManagerApp/` standalone Task Manager app entry point
 - `Shared/` theme, settings UI kit, hotkeys, battery config shared with the helper
 - `Helper/` root launch daemon (`com.taru.tweaks.helper`) registered with `SMAppService`

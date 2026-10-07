@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let nav = Nav()
 
     func updateDockIcon() {
-        let any = [settings, dashboard, taskManager].contains { $0?.isVisible == true }
+        let any = [settings, dashboard].contains { $0?.isVisible == true }
         let policy: NSApplication.ActivationPolicy = (any || UserDefaults.standard.bool(forKey: "dock.always")) ? .regular : .accessory
         if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
     }
@@ -35,8 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func openTaskManager() {
-        if taskManager == nil { taskManager = makeWindow("Task Manager", NSSize(width: 980, height: 680), TaskManagerView()) }
-        present(taskManager)
+        let url = URL(fileURLWithPath: "/Applications/Task Manager.app")
+        let cfg = NSWorkspace.OpenConfiguration(); cfg.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: cfg)
     }
 
     func registerTaskManagerKey() {
@@ -153,7 +154,6 @@ struct SettingsRoot: View {
         SidebarGroup(id: "Battery", items: [SidebarItem(id: "battery.charging", title: "Charging", icon: "bolt"), SidebarItem(id: "battery.protection", title: "Protection", icon: "thermometer.medium"),
                                            SidebarItem(id: "battery.automation", title: "Automation", icon: "calendar.badge.clock"), SidebarItem(id: "battery.display", title: "Dashboard", icon: "chart.xyaxis.line")]),
         SidebarGroup(id: "Display", items: [SidebarItem(id: "brightness", title: "XDR Boost", icon: "sun.max")]),
-        SidebarGroup(id: "System", items: [SidebarItem(id: "taskmanager", title: "Task Manager", icon: "list.bullet.rectangle")]),
         SidebarGroup(id: "Passwords", items: [SidebarItem(id: "vault", title: "Bitwarden Bridge", icon: "key")])
     ]
     var body: some View {
@@ -164,7 +164,6 @@ struct SettingsRoot: View {
             case let p where p.hasPrefix("switcher") || p == "desktop": SwitcherSettings(page: p)
             case let p where p.hasPrefix("battery"): BatterySettings(page: p)
             case "brightness": BrightnessSettings()
-            case "taskmanager": TaskManagerSettings()
             default: VaultSettings()
             }
         }
@@ -205,6 +204,7 @@ struct GeneralPage: View {
             SettingRow(title: "Dock right-click Force Quit") { Switch(on: $switcher.dockForceQuit) }
             SettingRow(title: "Battery control") { Switch(on: Binding(get: { battery.config.enabled }, set: { v in battery.update { $0.enabled = v } })) }
             SettingRow(title: "XDR Boost") { Switch(on: $bright.on) }
+            SettingRow(title: "Task Manager shortcut", detail: "Opens the Task Manager app from anywhere") { TaskManagerKey() }
             SectionLabel(text: "App")
             SettingRow(title: "Always show in the Dock", detail: "Otherwise the Dock icon only appears while a Taru Tweaks window is open") {
                 Switch(on: Binding(get: { dockAlways }, set: { dockAlways = $0; UserDefaults.standard.set($0, forKey: "dock.always"); AppDelegate.shared.updateDockIcon() }))
@@ -308,17 +308,11 @@ struct TaruTweaksApp: App {
     }
 }
 
-struct TaskManagerSettings: View {
+struct TaskManagerKey: View {
     @State var mask: UInt64 = (UserDefaults.standard.object(forKey: "tm.mask") as? NSNumber)?.uint64Value ?? 0x60000
     @State var key: Int64 = (UserDefaults.standard.object(forKey: "tm.key") as? NSNumber)?.int64Value ?? 53
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PageTitle(title: "Task Manager", subtitle: "Processes, live performance graphs and startup apps, like Windows Task Manager.")
-            SettingRow(title: "Shortcut", detail: "Windows uses Ctrl+Shift+Esc") {
-                KeyRecorder(mask: Binding(get: { mask }, set: { mask = $0; UserDefaults.standard.set($0, forKey: "tm.mask"); AppDelegate.shared.registerTaskManagerKey() }),
-                            key: Binding(get: { key }, set: { key = $0; UserDefaults.standard.set($0, forKey: "tm.key"); AppDelegate.shared.registerTaskManagerKey() }))
-            }
-            SettingRow(title: "Open Task Manager") { TweakButton(title: "Open") { AppDelegate.shared.openTaskManager() } }
-        }
+        KeyRecorder(mask: Binding(get: { mask }, set: { mask = $0; UserDefaults.standard.set($0, forKey: "tm.mask"); AppDelegate.shared.registerTaskManagerKey() }),
+                    key: Binding(get: { key }, set: { key = $0; UserDefaults.standard.set($0, forKey: "tm.key"); AppDelegate.shared.registerTaskManagerKey() }))
     }
 }

@@ -18,6 +18,8 @@ struct ProcRow: Identifiable, Equatable {
 }
 
 enum Unresponsive {
+    typealias ConnFn = @convention(c) () -> Int32
+    static let connection: Int32 = dlsym(dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY), "SLSMainConnectionID").map { unsafeBitCast($0, to: ConnFn.self)() } ?? 0
     typealias Fn = @convention(c) (Int32, UnsafePointer<ProcessSerialNumber>) -> Bool
     static let fn: Fn? = dlsym(dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY), "SLSEventIsAppUnresponsive").map { unsafeBitCast($0, to: Fn.self) }
     typealias PSNFn = @convention(c) (pid_t, UnsafeMutablePointer<ProcessSerialNumber>) -> OSStatus
@@ -26,7 +28,7 @@ enum Unresponsive {
         guard let fn, let psnFor else { return false }
         var psn = ProcessSerialNumber()
         guard psnFor(pid, &psn) == noErr else { return false }
-        return withUnsafePointer(to: &psn) { fn(SkyLight.connection, $0) }
+        return withUnsafePointer(to: &psn) { fn(connection, $0) }
     }
 }
 
