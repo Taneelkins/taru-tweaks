@@ -16,10 +16,13 @@ final class SelectionOverlay {
     private var finished = false
     let windowRects: [(CGWindowID, CGRect)]
     weak var editing: OverlayView?
+    private var tucked: [NSWindow] = []
 
     init(shots: [DisplayShot], done: @escaping (Result) -> Void) {
         self.done = done
         windowRects = SelectionOverlay.listWindows()
+        tucked = NSApp.windows.filter { $0.isVisible && $0.level == .normal && !($0 is NSPanel) }
+        tucked.forEach { $0.orderOut(nil) }
         NSApp.activate(ignoringOtherApps: true)
         for shot in shots {
             let w = OverlayWindow(shot: shot, owner: self)
@@ -52,7 +55,11 @@ final class SelectionOverlay {
         finished = true
         windows.forEach { $0.orderOut(nil) }
         windows = []
-        DispatchQueue.main.async { self.done(r) }
+        let back = tucked
+        DispatchQueue.main.async {
+            self.done(r)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { back.forEach { $0.orderBack(nil) } }
+        }
     }
 
     func refreshAll() { windows.forEach { $0.view.needsDisplay = true } }
