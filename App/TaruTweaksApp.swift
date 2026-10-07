@@ -67,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         debugHooks()
         registerTaskManagerKey()
         MenuBarManager.registerKey()
+        Capture.shared.registerKeys()
         HotKeys.shared.start()
         MenuBarManager.shared.start()
         Responsiveness.shared.start()
@@ -177,7 +178,8 @@ struct SettingsRoot: View {
                                            SidebarItem(id: "desktop", title: "Desktop", icon: "menubar.dock.rectangle"), SidebarItem(id: "dock", title: "Taru Dock", icon: "dock.rectangle")]),
         SidebarGroup(id: "Battery", items: [SidebarItem(id: "battery.charging", title: "Charging", icon: "bolt"), SidebarItem(id: "battery.protection", title: "Protection", icon: "thermometer.medium"),
                                            SidebarItem(id: "battery.automation", title: "Automation", icon: "calendar.badge.clock"), SidebarItem(id: "battery.display", title: "Dashboard", icon: "chart.xyaxis.line")]),
-        SidebarGroup(id: "Display", items: [SidebarItem(id: "brightness", title: "XDR Boost", icon: "sun.max"), SidebarItem(id: "wallpaper", title: "Live Wallpaper", icon: "play.rectangle")])
+        SidebarGroup(id: "Display", items: [SidebarItem(id: "brightness", title: "XDR Boost", icon: "sun.max"), SidebarItem(id: "wallpaper", title: "Live Wallpaper", icon: "play.rectangle")]),
+        SidebarGroup(id: "Capture", items: [SidebarItem(id: "capture", title: "Screenshots", icon: "camera.viewfinder")])
     ]
     var body: some View {
         TweaksShell(groups: groups, current: $nav.page) { page in
@@ -189,6 +191,7 @@ struct SettingsRoot: View {
             case let p where p.hasPrefix("battery"): BatterySettings(page: p)
             case "dock": DockPresetsSettings()
             case "wallpaper": WallpaperSettings()
+            case "capture": CaptureSettings()
             default: BrightnessSettings()
             }
         }
