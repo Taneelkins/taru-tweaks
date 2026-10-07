@@ -441,8 +441,9 @@ final class DockView: NSView, NSPopoverDelegate {
         let pinned = Set(activeRow.compactMap { $0.url?.path })
         var right: [DockTile] = []
         if model.showRunning {
+            var seen = Set<String>()
             for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
-                guard let u = app.bundleURL, u.path != FinderPath, !pinned.contains(u.path), app.bundleIdentifier != Bundle.main.bundleIdentifier else { continue }
+                guard let u = app.bundleURL, u.path != FinderPath, !pinned.contains(u.path), app.bundleIdentifier != Bundle.main.bundleIdentifier, seen.insert(u.path).inserted else { continue }
                 right.append(DockTile(kind: .running(u), page: -1, size: size))
             }
         }
@@ -666,6 +667,12 @@ final class DockView: NSView, NSPopoverDelegate {
             NSWorkspace.shared.open(i.url)
         default:
             guard let u = t.url else { return }
+            let wins = windows(of: u)
+            if wins.count > 1 { showWindows(wins, from: t); return }
+            if wins.count == 1, let w = wins.first, NSWorkspace.shared.frontmostApplication?.processIdentifier != w.pid || w.minimized {
+                WindowEngine.shared.focus(w)
+                return
+            }
             if !NSWorkspace.shared.runningApplications.contains(where: { $0.bundleURL?.path == u.path }) {
                 launching.insert(u.path)
                 bounce(t)
@@ -706,6 +713,13 @@ final class DockView: NSView, NSPopoverDelegate {
             m.addItem(ClosureItem("New Finder Window") { NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory())) })
         default:
             guard let u = t.url else { break }
+            let wins = t.isApp ? windows(of: u) : []
+            for w in wins {
+                let it = ClosureItem(w.title.isEmpty ? w.appName : w.title) { WindowEngine.shared.focus(w) }
+                if w.minimized { it.image = NSImage(systemSymbolName: "minus.square", accessibilityDescription: nil) }
+                m.addItem(it)
+            }
+            if !wins.isEmpty { m.addItem(.separator()) }
             if t.isApp {
                 m.addItem(ClosureItem("Open") { [weak self] in self?.activate(t) })
             } else {
@@ -755,19 +769,38 @@ final class DockView: NSView, NSPopoverDelegate {
         }
     }
 
-    // MARK: Folder stacks
+    private func windows(of app: URL) -> [Win] {
+        let pids = Set(NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == app.path }.map(\.processIdentifier))
+        guard !pids.isEmpty else { return [] }
+        return WindowEngine.shared.all().filter { pids.contains($0.pid) && !$0.windowless }
+    }
 
-    private func showStack(_ item: DockItem, from t: DockTile) {
+    private func showWindows(_ wins: [Win], from t: DockTile) {
+        let picker = WindowPickerModel(wins: wins)
+        present(WindowPicker(model: picker) { [weak self] w in
+            self?.popover?.performClose(nil)
+            WindowEngine.shared.focus(w)
+        }, from: t)
+        Thumbnails.shared.refresh(wins) { DispatchQueue.main.async { picker.reload() } }
+    }
+
+    private func present<V: View>(_ content: V, from t: DockTile) {
         popover?.performClose(nil)
         let pop = NSPopover()
         pop.behavior = .transient
         pop.appearance = NSAppearance(named: .darkAqua)
-        pop.contentViewController = NSHostingController(rootView: StackView(folder: item.url) { [weak pop] in pop?.performClose(nil) })
+        pop.contentViewController = NSHostingController(rootView: content)
         pop.delegate = self
         popover = pop
         dock.holds += 1
         popoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak pop] _ in pop?.performClose(nil) }
         pop.show(relativeTo: rect(of: t), of: self, preferredEdge: .maxY)
+    }
+
+    // MARK: Folder stacks
+
+    private func showStack(_ item: DockItem, from t: DockTile) {
+        present(StackView(folder: item.url) { [weak self] in self?.popover?.performClose(nil) }, from: t)
     }
 
     func popoverDidClose(_ notification: Notification) {
@@ -1008,5 +1041,46 @@ struct StackView: View {
             }
             return a.lastPathComponent.localizedStandardCompare(b.lastPathComponent) == .orderedAscending
         }.prefix(60))
+    }
+}
+
+final class WindowPickerModel: ObservableObject {
+    @Published var wins: [Win]
+    @Published var thumbs: [CGWindowID: CGImage] = [:]
+    init(wins: [Win]) { self.wins = wins; reload() }
+    func reload() { thumbs = Dictionary(uniqueKeysWithValues: wins.compactMap { w in Thumbnails.shared.cache[w.id].map { (w.id, $0) } }) }
+}
+
+struct WindowPicker: View {
+    @ObservedObject var model: WindowPickerModel
+    let pick: (Win) -> Void
+    @State private var hover: CGWindowID?
+    @ObservedObject var theme = Theme.shared
+
+    var body: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.fixed(180), spacing: 10, alignment: .top), count: min(max(model.wins.count, 1), 4)), spacing: 12) {
+            ForEach(model.wins) { w in
+                Button { pick(w) } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ZStack {
+                            Rectangle().fill(Color.black)
+                            if let img = model.thumbs[w.id] {
+                                Image(decorative: img, scale: 2).resizable().aspectRatio(contentMode: .fit)
+                            } else {
+                                Text(w.minimized ? "MINIMIZED" : "NO PREVIEW").font(.system(size: 10, weight: .bold, design: .monospaced)).foregroundStyle(Palette.ash)
+                            }
+                        }
+                        .frame(width: 180, height: 112)
+                        .overlay(Rectangle().stroke(hover == w.id ? theme.accent : Palette.rule, lineWidth: hover == w.id ? 2 : 1))
+                        Text(w.title.isEmpty ? w.appName : w.title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Palette.bone)
+                            .lineLimit(1).frame(width: 180, alignment: .leading)
+                    }
+                }
+                .buttonStyle(.plain)
+                .onHover { hover = $0 ? w.id : (hover == w.id ? nil : hover) }
+            }
+        }
+        .padding(12)
+        .background(Palette.pit)
     }
 }
