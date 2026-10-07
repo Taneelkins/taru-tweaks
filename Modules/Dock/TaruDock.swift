@@ -361,6 +361,8 @@ final class DockView: NSView, NSPopoverDelegate {
     private var bars: [CALayer] = []
     private var hints: [Int: CATextLayer] = [:]
     private var pageWidth: CGFloat = 0
+    private var pageX: [CGFloat] = []
+    private var pageWidths: [CGFloat] = []
     private var offset: CGFloat = 0
     private var tracking = false
     private var axisLocked: Bool?
@@ -443,7 +445,7 @@ final class DockView: NSView, NSPopoverDelegate {
                 runningURLs.append(u)
             }
         }
-        let slots = max(3, model.presets.map(\.items.count).max() ?? 0)
+        let slots = max(3, model.presets.indices.contains(model.activeIndex) ? model.presets[model.activeIndex].items.count : 0)
         let count = CGFloat(1 + slots + runningURLs.count + 1)
         let maxWidth = (NSScreen.screens.first?.frame.width ?? 1512) - 24
         let fit = (maxWidth - 2 * pad - 16 - count * gap) / count
@@ -497,22 +499,30 @@ final class DockView: NSView, NSPopoverDelegate {
         CATransaction.setAnimationDuration(0.2)
         var x = pad
         for t in fixedLeft { t.layer.frame.origin = CGPoint(x: x, y: 6); x += s + gap }
-        let visibleActive = activeRow.filter { $0 !== excluding }.count + (gapAt != nil ? 1 : 0)
-        let slots = max(3, pageTiles.map(\.count).max() ?? 0, visibleActive)
-        pageWidth = CGFloat(slots) * (s + gap) - gap
+        var widths: [CGFloat] = []
+        for (i, row) in pageTiles.enumerated() {
+            let n = row.filter { $0 !== excluding }.count + (i == active && gapAt != nil ? 1 : 0)
+            widths.append(CGFloat(max(3, n)) * (s + gap) - gap)
+        }
+        if widths.isEmpty { widths = [3 * (s + gap) - gap] }
+        let pageGap = gap * 4
+        pageX = widths.indices.map { i in widths[..<i].reduce(0, +) + CGFloat(i) * pageGap }
+        pageWidths = widths
+        let ai = min(active, widths.count - 1)
+        pageWidth = widths[ai]
         pager.frame = CGRect(x: x, y: 0, width: pageWidth, height: H)
-        pages.frame = CGRect(x: -CGFloat(active) * pageWidth + offset, y: 0, width: CGFloat(max(pageTiles.count, 1)) * pageWidth, height: H)
+        pages.frame = CGRect(x: -pageX[ai] + offset, y: 0, width: (pageX.last ?? 0) + (widths.last ?? 0), height: H)
         for (i, row) in pageTiles.enumerated() {
             let visible = row.filter { $0 !== excluding }
             let n = visible.count + (i == active && gapAt != nil ? 1 : 0)
-            var tx = CGFloat(i) * pageWidth + (pageWidth - (CGFloat(n) * (s + gap) - gap)) / 2
+            var tx = pageX[i] + (widths[i] - (CGFloat(n) * (s + gap) - gap)) / 2
             for (k, t) in visible.enumerated() {
                 if i == active, let g = gapAt, k == g { tx += s + gap }
                 t.layer.frame.origin = CGPoint(x: tx, y: 6)
                 tx += s + gap
             }
         }
-        for (i, h) in hints { h.frame = CGRect(x: CGFloat(i) * pageWidth, y: 6 + 8 + s / 2 - 7, width: pageWidth, height: 14); h.isHidden = i == active && gapAt != nil }
+        for (i, h) in hints where i < widths.count { h.frame = CGRect(x: pageX[i], y: 6 + 8 + s / 2 - 7, width: widths[i], height: 14); h.isHidden = i == active && gapAt != nil }
         x += pageWidth + gap
         separators[0].frame = CGRect(x: x - gap / 2 + 2, y: 14 + s * 0.15, width: 1, height: s * 0.7)
         x += 4
@@ -876,7 +886,7 @@ final class DockView: NSView, NSPopoverDelegate {
             var visual = offset
             if (i == 0 && visual > 0) || (i == last && visual < 0) { visual *= 0.25 }
             CATransaction.begin(); CATransaction.setDisableActions(true)
-            pages.frame.origin.x = -CGFloat(i) * pageWidth + visual
+            pages.frame.origin.x = -(pageX.indices.contains(i) ? pageX[i] : 0) + visual
             CATransaction.commit()
         case .ended, .cancelled:
             guard tracking else { return }
@@ -901,7 +911,7 @@ final class DockView: NSView, NSPopoverDelegate {
             guard let self else { return }
             if target != self.model.activeIndex { self.model.select(target) } else if self.needsRebuild { self.rebuild() }
         }
-        pages.frame.origin.x = -CGFloat(target) * pageWidth
+        pages.frame.origin.x = -(pageX.indices.contains(target) ? pageX[target] : 0)
         for (k, b) in bars.enumerated() { b.backgroundColor = (k == target ? NSColor(Theme.shared.accent) : NSColor(Palette.rule)).cgColor }
         CATransaction.commit()
         if target != model.activeIndex, model.presets.indices.contains(target) {
