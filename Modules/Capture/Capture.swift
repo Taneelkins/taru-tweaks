@@ -53,12 +53,14 @@ final class CapturePrefs: ObservableObject {
     @Published var saveOnCopy: Bool { didSet { d.set(saveOnCopy, forKey: "cap.saveOnCopy") } }
     @Published var enterAction: String { didSet { d.set(enterAction, forKey: "cap.enter") } }
     @Published var magnifier: Bool { didSet { d.set(magnifier, forKey: "cap.loupe") } }
+    @Published var thumbnail: Bool { didSet { d.set(thumbnail, forKey: "cap.thumb") } }
 
     init() {
         openEditor = d.object(forKey: "cap.editor") as? Bool ?? false
         saveOnCopy = d.object(forKey: "cap.saveOnCopy") as? Bool ?? true
         enterAction = d.string(forKey: "cap.enter") ?? "both"
         magnifier = d.object(forKey: "cap.loupe") as? Bool ?? true
+        thumbnail = d.object(forKey: "cap.thumb") as? Bool ?? false
         copy = d.object(forKey: "cap.copy") as? Bool ?? true
         save = d.object(forKey: "cap.save") as? Bool ?? true
         sound = d.object(forKey: "cap.sound") as? Bool ?? false
@@ -143,6 +145,7 @@ final class Capture {
         let url = doSave ? write(image, scale: scale) : nil
         if doCopy { copy(image, scale: scale) }
         if prefs.openEditor { EditorController.show(image, scale: scale, savedURL: url); return }
+        guard prefs.thumbnail else { return }
         let what = doCopy && url != nil ? "Copied and saved" : doCopy ? "Copied" : url != nil ? "Saved" : "Captured"
         toast.show(what, thumbnail: NSImage(cgImage: image, size: .zero)) { EditorController.show(image, scale: scale, savedURL: url) }
     }
@@ -336,7 +339,8 @@ struct CaptureSettings: View {
                     Switch(on: $prefs.save)
                 }
             }
-            SettingRow(title: "Open the big editor after copying", detail: "Off: a thumbnail shows in the corner; click it to edit.") { Switch(on: $prefs.openEditor) }
+            SettingRow(title: "Open the big editor after copying") { Switch(on: $prefs.openEditor) }
+            SettingRow(title: "Thumbnail after saving", detail: "A small preview in the corner for a few seconds; click it to edit.") { Switch(on: $prefs.thumbnail) }
             SectionLabel(text: "Feel")
             SettingRow(title: "Magnifier", detail: "Pixel grid, coordinates and color while you aim.") { Switch(on: $prefs.magnifier) }
             SettingRow(title: "Shutter sound") { Switch(on: $prefs.sound) }
