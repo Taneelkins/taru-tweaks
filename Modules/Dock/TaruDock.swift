@@ -1095,11 +1095,23 @@ final class DockPopup: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
+    func show(below anchor: NSRect, within screen: NSScreen) {
+        let size = contentView?.fittingSize ?? .zero
+        let f = screen.frame
+        let x = min(max(anchor.midX - size.width / 2, f.minX + 8), f.maxX - size.width - 8)
+        present(NSRect(x: x, y: anchor.minY - size.height - 6, width: size.width, height: size.height))
+    }
+
     func show(above anchor: NSRect, within screen: NSScreen) {
         let size = contentView?.fittingSize ?? .zero
         let f = screen.visibleFrame
         let x = min(max(anchor.midX - size.width / 2, f.minX + 8), f.maxX - size.width - 8)
         let y = min(anchor.maxY + 12, f.maxY - size.height - 8)
+        present(NSRect(x: x, y: y, width: size.width, height: size.height))
+    }
+
+    private func present(_ frame: NSRect) {
+        let size = frame.size, x = frame.minX, y = frame.minY
         setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
         alphaValue = 0
         orderFrontRegardless()

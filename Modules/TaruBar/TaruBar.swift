@@ -9,8 +9,6 @@ final class TaruBarModel: ObservableObject {
     @Published var showRAM: Bool { didSet { d.set(showRAM, forKey: "bar.ram"); changed() } }
     @Published var showMusic: Bool { didSet { d.set(showMusic, forKey: "bar.music"); changed() } }
     @Published var showWeather: Bool { didSet { d.set(showWeather, forKey: "bar.weather"); if showWeather { TaruBar.shared.fetchWeather() }; changed() } }
-    @Published var showBattery: Bool { didSet { d.set(showBattery, forKey: "bar.battery"); changed() } }
-    @Published var showClock: Bool { didSet { d.set(showClock, forKey: "bar.clock"); changed() } }
     @Published var tightSpacing: Bool { didSet { d.set(tightSpacing, forKey: "bar.tight"); TaruBar.shared.applySpacing() } }
     @Published var overlay: Bool { didSet { d.set(overlay, forKey: "bar.overlay"); changed(); TaruBar.shared.updateButton() } }
     @Published var city: String { didSet { d.set(city, forKey: "bar.city") } }
@@ -33,8 +31,6 @@ final class TaruBarModel: ObservableObject {
         showRAM = d.object(forKey: "bar.ram") as? Bool ?? (d.object(forKey: "bar.stats") as? Bool ?? true)
         showMusic = d.object(forKey: "bar.music") as? Bool ?? true
         showWeather = d.object(forKey: "bar.weather") as? Bool ?? true
-        showBattery = d.object(forKey: "bar.battery") as? Bool ?? false
-        showClock = d.object(forKey: "bar.clock") as? Bool ?? false
         tightSpacing = d.object(forKey: "bar.tight") as? Bool ?? true
         overlay = d.object(forKey: "bar.overlay") as? Bool ?? false
         city = d.string(forKey: "bar.city") ?? "Toledo, Ohio"
@@ -46,8 +42,7 @@ final class TaruBarModel: ObservableObject {
     private func changed() { DispatchQueue.main.async { TaruBar.shared.place() } }
 
     func minimal() {
-        showCPU = false; showRAM = false; showMusic = false; showWeather = false; showClock = false
-        showBattery = true
+        showCPU = false; showRAM = false; showMusic = false; showWeather = false
     }
 
     func everything() {
@@ -76,7 +71,7 @@ final class TaruBar {
     static let shared = TaruBar()
     let model = TaruBarModel.shared
     private var panel: TaruBarPanel?
-    private var host: NSHostingView<TaruBarView>?
+    private var host: BarHost?
     private var timers: [Timer] = []
     private var button: NSStatusItem?
     private var lastTicks: [(UInt64, UInt64)] = []
@@ -127,7 +122,7 @@ final class TaruBar {
         }
         if panel == nil {
             let p = TaruBarPanel()
-            let h = NSHostingView(rootView: TaruBarView(model: model))
+            let h = BarHost(rootView: TaruBarView(model: model))
             p.contentView = h
             panel = p
             host = h
@@ -151,23 +146,83 @@ final class TaruBar {
 
     @objc private func buttonClicked() {
         if NSApp.currentEvent?.type == .rightMouseUp {
-            let m = NSMenu()
-            for (title, key) in [("CPU", \TaruBarModel.showCPU), ("Memory", \.showRAM), ("Now playing", \.showMusic), ("Battery", \.showBattery), ("Weather", \.showWeather), ("Clock", \.showClock)] as [(String, ReferenceWritableKeyPath<TaruBarModel, Bool>)] {
-                let it = ClosureItem(title) { [weak self] in guard let self else { return }; self.model[keyPath: key].toggle() }
-                it.state = model[keyPath: key] ? .on : .off
-                m.addItem(it)
-            }
-            m.addItem(.separator())
-            m.addItem(ClosureItem("Minimal (battery only)") { [weak self] in self?.model.minimal() })
-            m.addItem(ClosureItem("Show everything") { [weak self] in self?.model.everything() })
-            m.addItem(.separator())
-            m.addItem(ClosureItem("Taru Bar settings…") { TaruBar.openSettings() })
-            button?.menu = m
+            button?.menu = readoutMenu()
             button?.button?.performClick(nil)
             button?.menu = nil
             return
         }
         model.overlay.toggle()
+    }
+
+    func readoutMenu() -> NSMenu {
+        let m = NSMenu()
+        let header = NSMenuItem(title: "Taru Bar — from Taru Tweaks", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        m.addItem(header)
+        m.addItem(.separator())
+        for (title, key) in [("CPU", \TaruBarModel.showCPU), ("Memory", \.showRAM), ("Now playing", \.showMusic), ("Weather", \.showWeather)] as [(String, ReferenceWritableKeyPath<TaruBarModel, Bool>)] {
+            let it = ClosureItem(title) { [weak self] in guard let self else { return }; self.model[keyPath: key].toggle() }
+            it.state = model[keyPath: key] ? .on : .off
+            m.addItem(it)
+        }
+        m.addItem(.separator())
+        m.addItem(ClosureItem("Hide all readouts") { [weak self] in self?.model.minimal() })
+        m.addItem(ClosureItem("Show all readouts") { [weak self] in self?.model.everything() })
+        m.addItem(.separator())
+        m.addItem(ClosureItem("Taru Bar settings…") { TaruBar.openSettings() })
+        return m
+    }
+
+    private var popup: DockPopup?
+
+    func showPopup<V: View>(_ content: V) {
+        if let p = popup { p.dismiss(); popup = nil; return }
+        let p = DockPopup(content)
+        p.onClose = { [weak self, weak p] in if self?.popup === p { self?.popup = nil } }
+        popup = p
+        let mouse = NSEvent.mouseLocation
+        p.show(below: NSRect(x: mouse.x, y: (panel?.frame.minY ?? mouse.y) , width: 0, height: 0), within: screen)
+    }
+
+    func topProcesses(_ done: @escaping ([(String, Double)]) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/ps")
+            p.arguments = ["-Ao", "pcpu=,comm=", "-r"]
+            let pipe = Pipe()
+            p.standardOutput = pipe
+            try? p.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            let rows = (String(data: data, encoding: .utf8) ?? "").split(separator: "\n").prefix(6).compactMap { line -> (String, Double)? in
+                let t = line.trimmingCharacters(in: .whitespaces)
+                guard let sp = t.firstIndex(of: " "), let v = Double(t[..<sp]) else { return nil }
+                let name = URL(fileURLWithPath: String(t[sp...]).trimmingCharacters(in: .whitespaces)).lastPathComponent
+                return (name, v)
+            }
+            DispatchQueue.main.async { done(Array(rows.prefix(5))) }
+        }
+    }
+
+    func hourly(_ done: @escaping (_ high: Double?, _ low: Double?, _ hours: [(String, Double, Int)]) -> Void) {
+        let unit = model.fahrenheit ? "fahrenheit" : "celsius"
+        guard let url = URL(string: String(format: "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&hourly=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&forecast_days=2&timezone=auto&temperature_unit=%@", model.latitude, model.longitude, unit)) else { return }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            let daily = json["daily"] as? [String: Any]
+            let hi = (daily?["temperature_2m_max"] as? [Double])?.first, lo = (daily?["temperature_2m_min"] as? [Double])?.first
+            var hours: [(String, Double, Int)] = []
+            if let h = json["hourly"] as? [String: Any], let times = h["time"] as? [String], let temps = h["temperature_2m"] as? [Double], let codes = h["weather_code"] as? [Int] {
+                let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd'T'HH:mm"
+                let out = DateFormatter(); out.dateFormat = "ha"
+                let now = Date()
+                for (i, t) in times.enumerated() {
+                    guard let d = f.date(from: t), d > now.addingTimeInterval(-3600), hours.count < 6 else { continue }
+                    hours.append((out.string(from: d).lowercased(), temps[i], codes[i]))
+                }
+            }
+            DispatchQueue.main.async { done(hi, lo, hours) }
+        }.resume()
     }
 
     func applySpacing() {
@@ -224,6 +279,8 @@ final class TaruBar {
 
     func place() {
         guard model.enabled, let panel, let host else { return }
+        let anything = model.showCPU || model.showRAM || (model.showMusic && !model.track.isEmpty) || (model.showWeather && !model.weatherText.isEmpty)
+        guard anything else { panel.orderOut(nil); return }
         let f = screen.frame
         let barHeight = max(f.maxY - screen.visibleFrame.maxY, screen.auxiliaryTopRightArea?.height ?? 0, 24)
         let notchRight = screen.auxiliaryTopRightArea?.minX ?? f.minX
@@ -363,33 +420,22 @@ struct TaruBarView: View {
                     Text("CPU").foregroundStyle(Palette.ash).font(.system(size: 9.5, weight: .bold, design: .monospaced))
                     Spark(values: model.cpu, color: theme.accent).frame(width: 30, height: 13)
                     Text("\(Int((model.cpu.last ?? 0) * 100))%").frame(minWidth: 30, alignment: .trailing)
-                } action: { NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Task Manager.app")) }
+                } action: { TaruBar.shared.showPopup(StatsPopup(model: model)) }
             }
             if model.showRAM {
                 segment {
                     Text("RAM").foregroundStyle(Palette.ash).font(.system(size: 9.5, weight: .bold, design: .monospaced))
                     Text("\(Int(model.memory * 100))%")
-                } action: { NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Task Manager.app")) }
+                } action: { TaruBar.shared.showPopup(StatsPopup(model: model)) }
             }
             if model.showMusic && !model.track.isEmpty {
                 segment {
                     Image(systemName: model.playing ? "waveform" : "pause.fill").foregroundStyle(theme.accent).font(.system(size: 10, weight: .bold))
                     Text(model.track).lineLimit(1).frame(maxWidth: 150, alignment: .leading)
-                } action: { TaruBar.shared.mediaKey(16) }
-                .help("\(model.track) · \(model.artist)\nClick: play/pause")
-            }
-            if model.showBattery {
-                segment {
-                    Image(systemName: BatteryModel.shared.battery.plugged ? "bolt.fill" : "battery.75percent").foregroundStyle(theme.accent).font(.system(size: 10, weight: .bold))
-                    Text("\(BatteryModel.shared.battery.percent)%")
-                } action: { DistributedNotificationCenter.default().postNotificationName(.init("com.taru.tweaks.open"), object: "battery.display", userInfo: nil, deliverImmediately: true) }
+                } action: { TaruBar.shared.showPopup(MusicPopup(model: model)) }
             }
             if model.showWeather && !model.weatherText.isEmpty {
-                segment { Text(model.weatherText) } action: { NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Weather.app")) }
-                    .help(model.city)
-            }
-            if model.showClock {
-                segment { Text(clockText) } action: { NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Calendar.app")) }
+                segment { Text(model.weatherText) } action: { TaruBar.shared.showPopup(WeatherPopup(model: model)) }
             }
         }
         .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
@@ -398,19 +444,6 @@ struct TaruBarView: View {
         .padding(.horizontal, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
         .background(model.overlay ? Color.black : Color.clear)
-        .contextMenu {
-            Toggle("CPU", isOn: $model.showCPU)
-            Toggle("Memory", isOn: $model.showRAM)
-            Toggle("Now playing", isOn: $model.showMusic)
-            Toggle("Battery", isOn: $model.showBattery)
-            Toggle("Weather", isOn: $model.showWeather)
-            Toggle("Clock", isOn: $model.showClock)
-            Divider()
-            Button("Minimal (battery only)") { model.minimal() }
-            Button("Show everything") { model.everything() }
-            Divider()
-            Button("Taru Bar settings…") { TaruBar.openSettings() }
-        }
     }
 
     private var clockText: String {
@@ -455,16 +488,14 @@ struct TaruBarSettings: View {
             PageTitle(title: "Taru Bar", subtitle: "Live readouts in the gap between the notch and your menu bar icons. Your icons stay real: menus open right under them and right-click works. Right-click the readouts to switch them on or off.")
             SettingRow(title: "Use Taru Bar") { Switch(on: $model.enabled) }
             HStack(spacing: 10) {
-                TweakButton(title: "Minimal") { model.minimal() }
-                TweakButton(title: "Everything") { model.everything() }
+                TweakButton(title: "Hide all") { model.minimal() }
+                TweakButton(title: "Show all") { model.everything() }
             }.padding(.vertical, 10)
             SectionLabel(text: "Readouts")
             SettingRow(title: "CPU", detail: "Live graph and percent. Click opens Task Manager.") { Switch(on: $model.showCPU) }
             SettingRow(title: "Memory") { Switch(on: $model.showRAM) }
             SettingRow(title: "Now playing", detail: "Spotify and Music. Click to play or pause.") { Switch(on: $model.showMusic) }
-            SettingRow(title: "Battery percent", detail: "Off by default since the battery icon already shows it.") { Switch(on: $model.showBattery) }
             SettingRow(title: "Weather", detail: model.city) { Switch(on: $model.showWeather) }
-            SettingRow(title: "Clock", detail: "Off by default; the macOS clock stays at the far right.") { Switch(on: $model.showClock) }
             SectionLabel(text: "Weather")
             SettingRow(title: "City") {
                 HStack(spacing: 8) {
@@ -482,5 +513,107 @@ struct TaruBarSettings: View {
             Text("Hide icons you don't need with the ‹ arrow; set which ones in Menu Bar.").font(.system(size: 11)).foregroundStyle(Palette.ash).padding(.top, 8)
         }
         .onAppear { cityField = model.city }
+    }
+}
+
+final class BarHost: NSHostingView<TaruBarView> {
+    override func rightMouseDown(with event: NSEvent) {
+        NSMenu.popUpContextMenu(TaruBar.shared.readoutMenu(), with: event, for: self)
+    }
+}
+
+struct PopupCard<C: View>: View {
+    let title: String
+    @ViewBuilder var content: C
+    @ObservedObject var theme = Theme.shared
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title.uppercased()).font(.system(size: 10.5, weight: .bold, design: .monospaced)).tracking(2).foregroundStyle(Palette.ash)
+            content
+        }
+        .padding(14)
+        .frame(width: 280, alignment: .leading)
+        .background(Color.black.opacity(0.96))
+    }
+}
+
+struct StatsPopup: View {
+    @ObservedObject var model: TaruBarModel
+    @ObservedObject var theme = Theme.shared
+    @State private var top: [(String, Double)] = []
+    var body: some View {
+        PopupCard(title: "CPU · Memory") {
+            HStack(alignment: .firstTextBaseline) {
+                Text("\(Int((model.cpu.last ?? 0) * 100))%").font(.system(size: 30, weight: .heavy, design: .monospaced)).foregroundStyle(theme.accent)
+                Text("CPU").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(Palette.ash)
+                Spacer()
+                Text("\(Int(model.memory * 100))%").font(.system(size: 18, weight: .bold, design: .monospaced)).foregroundStyle(Palette.bone)
+                Text("RAM").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(Palette.ash)
+            }
+            Spark(values: model.cpu, color: theme.accent).frame(height: 34)
+            VStack(spacing: 6) {
+                ForEach(Array(top.enumerated()), id: \.offset) { _, row in
+                    HStack {
+                        Text(row.0).font(.system(size: 12)).foregroundStyle(Palette.bone).lineLimit(1)
+                        Spacer()
+                        Text(String(format: "%.0f%%", row.1)).font(.system(size: 11.5, weight: .semibold, design: .monospaced)).foregroundStyle(Palette.ash)
+                    }
+                }
+            }
+            TweakButton(title: "Open Task Manager") { NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Task Manager.app")) }
+        }
+        .onAppear { TaruBar.shared.topProcesses { top = $0 } }
+    }
+}
+
+struct MusicPopup: View {
+    @ObservedObject var model: TaruBarModel
+    @ObservedObject var theme = Theme.shared
+    var body: some View {
+        PopupCard(title: "Now playing") {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.track).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.bone).lineLimit(2)
+                Text(model.artist).font(.system(size: 12)).foregroundStyle(Palette.ash).lineLimit(1)
+            }
+            HStack(spacing: 18) {
+                Button { TaruBar.shared.mediaKey(18) } label: { Image(systemName: "backward.fill") }.buttonStyle(.plain)
+                Button { TaruBar.shared.mediaKey(16) } label: { Image(systemName: model.playing ? "pause.fill" : "play.fill").font(.system(size: 20)) }.buttonStyle(.plain)
+                Button { TaruBar.shared.mediaKey(17) } label: { Image(systemName: "forward.fill") }.buttonStyle(.plain)
+            }
+            .font(.system(size: 15))
+            .foregroundStyle(theme.accent)
+            .frame(maxWidth: .infinity)
+            TweakButton(title: "Open Spotify") { NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Spotify.app")) }
+        }
+    }
+}
+
+struct WeatherPopup: View {
+    @ObservedObject var model: TaruBarModel
+    @ObservedObject var theme = Theme.shared
+    @State private var high: Double?
+    @State private var low: Double?
+    @State private var hours: [(String, Double, Int)] = []
+    var body: some View {
+        PopupCard(title: model.city) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(model.temperature.map { "\(Int($0.rounded()))°" } ?? "–").font(.system(size: 30, weight: .heavy, design: .monospaced)).foregroundStyle(theme.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.weatherText.split(separator: " ", maxSplits: 1).dropFirst().joined()).font(.system(size: 12, weight: .bold, design: .monospaced)).foregroundStyle(Palette.bone)
+                    if let high, let low { Text("H \(Int(high.rounded()))°  L \(Int(low.rounded()))°").font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash) }
+                }
+            }
+            HStack(spacing: 0) {
+                ForEach(Array(hours.enumerated()), id: \.offset) { _, h in
+                    VStack(spacing: 4) {
+                        Text(h.0).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.ash)
+                        Text("\(Int(h.1.rounded()))°").font(.system(size: 12.5, weight: .semibold, design: .monospaced)).foregroundStyle(Palette.bone)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            TweakButton(title: "Open Weather") { NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Weather.app")) }
+        }
+        .onAppear { TaruBar.shared.hourly { hi, lo, hrs in high = hi; low = lo; hours = hrs } }
     }
 }

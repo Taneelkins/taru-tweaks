@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HotKeys.shared.start()
         MenuBarManager.shared.start()
         TaruBar.shared.start()
+        StatusItems.shared.start()
         Responsiveness.shared.start()
         updateDockIcon()
         for sig in [SIGTERM, SIGINT] {
@@ -327,14 +328,7 @@ struct TaruTweaksApp: App {
     @ObservedObject var items = MenuItems.shared
 
     var body: some Scene {
-        MenuBarExtra(isInserted: items.binding(\.main, "menu.main")) { MainMenu() } label: { Image(systemName: "flame.fill") }
-            .menuBarExtraStyle(.window)
-        MenuBarExtra(isInserted: items.binding(\.battery, "battery.menu.show")) {
-            BatteryMenuView(openDashboard: { AppDelegate.shared.openDashboard() }, openSettings: { AppDelegate.shared.openSettings("battery.charging") })
-        } label: { BatteryLabel() }
-        .menuBarExtraStyle(.window)
-        MenuBarExtra(isInserted: items.binding(\.brightness, "brightness.menu")) { BrightnessMenu(openSettings: { AppDelegate.shared.openSettings("brightness") }) } label: { BrightnessLabel() }
-        .menuBarExtraStyle(.window)
+        Settings { EmptyView() }
     }
 }
 
