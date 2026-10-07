@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = Brightness.shared
         debugHooks()
         registerTaskManagerKey()
+        VaultController.shared.registerKeys()
         updateDockIcon()
         for sig in [SIGTERM, SIGINT] {
             signal(sig, SIG_IGN)
@@ -144,7 +145,7 @@ struct SettingsRoot: View {
             case let p where p.hasPrefix("battery"): BatterySettings(page: p)
             case "brightness": BrightnessSettings()
             case "taskmanager": TaskManagerSettings()
-            default: VStack(alignment: .leading) { PageTitle(title: "Bitwarden Bridge", subtitle: "Type logins from your Bitwarden vault into any app with a shortcut and Touch ID. Coming next.") }
+            default: VaultSettings()
             }
         }
     }

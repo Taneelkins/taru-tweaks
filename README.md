@@ -8,6 +8,7 @@ Personal macOS utility for a MacBook Pro (M5, macOS 26). One app, one set of per
 | **Desktop** | — | ⌘D Show Desktop (minimize all, press again to restore). Dock right-click shows Force Quit. |
 | **Battery** | AlDente Pro | Charge limit, sailing, discharge, auto-discharge, top up, heat protection, calibration, stop charging asleep, stay awake until limit, clamshell discharge, MagSafe LED, power modes, schedules + history, notifications, dashboard with Sankey power flow, Apple Shortcuts actions. Root helper uses the M5 SMC keys `CHTE` / `CHIE` / `ACLC`. |
 | **XDR Boost** | BrightIntosh | Up to 1000 nits everywhere, custom shortcuts, battery/heat cut-offs, timer, auto-on with charger, external XDR displays. |
+| **Bitwarden Bridge** | Bitwarden autofill on iPhone | ⌃⌘L fills the matching login into any app (username, Tab, password), ⌃⌥⌘L searchable picker, ⌃⌘O types the 2FA code. Official `bw` CLI underneath; master password in the Keychain behind Touch ID; auto-lock on timeout, sleep and screen lock; per-app memory. |
 | **Task Manager** | Windows Task Manager | Processes grouped by app, CPU/memory, not-responding detection, End task / Force quit / process tree, live CPU/GPU/memory/network/disk graphs, startup items. ⌃⇧Esc. |
 
 ## Build

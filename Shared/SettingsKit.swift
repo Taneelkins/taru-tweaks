@@ -31,7 +31,7 @@ struct TweaksShell<Content: View>: View {
                     VStack(alignment: .leading, spacing: 14) {
                         ForEach(groups) { g in
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(g.id.uppercased()).font(.system(size: 9.5, weight: .bold, design: .monospaced)).tracking(2).foregroundStyle(Palette.rule.opacity(1.6)).padding(.bottom, 4)
+                                Text(g.id.uppercased()).font(.system(size: 9.5, weight: .bold, design: .monospaced)).tracking(2).foregroundStyle(Palette.ash.opacity(0.75)).padding(.bottom, 4)
                                 ForEach(g.items) { item in
                                     Button { current = item.id } label: {
                                         HStack(spacing: 9) {
@@ -155,6 +155,7 @@ struct TweakButton: View {
     var body: some View {
         Button(action: action) {
             Text(title.uppercased()).font(.system(size: 12, weight: .bold, design: .monospaced)).tracking(1.5)
+                .lineLimit(1).fixedSize()
                 .padding(.horizontal, 14).padding(.vertical, 6)
                 .foregroundStyle(theme.accent).overlay(Rectangle().stroke(theme.accent))
         }.buttonStyle(.plain)
