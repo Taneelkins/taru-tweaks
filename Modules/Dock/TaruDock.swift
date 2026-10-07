@@ -8,7 +8,8 @@ let DockLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
 enum MacDock {
     static let domain = "com.apple.dock" as CFString
     static let hidden: [(String, CFPropertyList)] = [("autohide", kCFBooleanTrue), ("autohide-delay", NSNumber(value: 1000.0)), ("no-bouncing", kCFBooleanTrue),
-                                                    ("launchanim", kCFBooleanFalse), ("tilesize", NSNumber(value: 16)), ("magnification", kCFBooleanFalse)]
+                                                    ("launchanim", kCFBooleanFalse), ("tilesize", NSNumber(value: 16)), ("magnification", kCFBooleanFalse),
+                                                    ("autohide-time-modifier", NSNumber(value: 1000.0))]
 
     static func hide() {
         let d = UserDefaults.standard
@@ -122,7 +123,7 @@ final class TaruDock {
         if !model.autohide { if !shown { show() }; return }
         if !shown {
             let f = targetFrame(shown: true)
-            if p.y <= screen.frame.minY + 1.5 && p.x >= f.minX - 40 && p.x <= f.maxX + 40 { show() }
+            if p.y <= screen.frame.minY + 1.5 && p.x >= f.minX - 160 && p.x <= f.maxX + 160 { show() }
             return
         }
         if holds > 0 || panel.frame.insetBy(dx: -30, dy: -30).contains(p) {
