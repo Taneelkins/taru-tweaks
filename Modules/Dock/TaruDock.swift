@@ -373,8 +373,7 @@ final class DockView: NSView, NSPopoverDelegate {
     private var dropHold = false
     private var launching = Set<String>()
     private var lastLabels: [String: String] = [:]
-    private var popover: NSPopover?
-    private var popoverMonitor: Any?
+    private var popup: DockPopup?
     private(set) var preferredSize = NSSize(width: 200, height: 70)
 
     private var s: CGFloat { CGFloat(model.iconSize) }
@@ -772,42 +771,36 @@ final class DockView: NSView, NSPopoverDelegate {
     private func windows(of app: URL) -> [Win] {
         let pids = Set(NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == app.path }.map(\.processIdentifier))
         guard !pids.isEmpty else { return [] }
-        return WindowEngine.shared.all().filter { pids.contains($0.pid) && !$0.windowless }
+        return WindowEngine.shared.all().filter { pids.contains($0.pid) && !$0.windowless && ($0.minimized || ($0.frame.width >= 420 && $0.frame.height >= 240)) }
     }
 
     private func showWindows(_ wins: [Win], from t: DockTile) {
         let picker = WindowPickerModel(wins: wins)
         present(WindowPicker(model: picker) { [weak self] w in
-            self?.popover?.performClose(nil)
+            self?.popup?.dismiss()
             WindowEngine.shared.focus(w)
         }, from: t)
         Thumbnails.shared.refresh(wins) { DispatchQueue.main.async { picker.reload() } }
     }
 
     private func present<V: View>(_ content: V, from t: DockTile) {
-        popover?.performClose(nil)
-        let pop = NSPopover()
-        pop.behavior = .transient
-        pop.appearance = NSAppearance(named: .darkAqua)
-        pop.contentViewController = NSHostingController(rootView: content)
-        pop.delegate = self
-        popover = pop
+        popup?.dismiss()
+        guard let w = window else { return }
+        let p = DockPopup(content)
+        p.onClose = { [weak self, weak p] in
+            guard let self, self.popup === p else { return }
+            self.popup = nil
+            self.dock.holds -= 1
+        }
+        popup = p
         dock.holds += 1
-        popoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak pop] _ in pop?.performClose(nil) }
-        pop.show(relativeTo: rect(of: t), of: self, preferredEdge: .maxY)
+        p.show(above: w.convertToScreen(convert(rect(of: t), to: nil)), within: w.screen ?? NSScreen.screens[0])
     }
 
     // MARK: Folder stacks
 
     private func showStack(_ item: DockItem, from t: DockTile) {
-        present(StackView(folder: item.url) { [weak self] in self?.popover?.performClose(nil) }, from: t)
-    }
-
-    func popoverDidClose(_ notification: Notification) {
-        if let m = popoverMonitor { NSEvent.removeMonitor(m) }
-        popoverMonitor = nil
-        popover = nil
-        dock.holds -= 1
+        present(StackView(folder: item.url) { [weak self] in self?.popup?.dismiss() }, from: t)
     }
 
     // MARK: Swiping between presets
@@ -1082,5 +1075,50 @@ struct WindowPicker: View {
         }
         .padding(12)
         .background(Palette.pit)
+    }
+}
+
+final class DockPopup: NSPanel {
+    var onClose: (() -> Void)?
+    private var monitors: [Any] = []
+    private var closed = false
+
+    init<V: View>(_ content: V) {
+        super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        level = NSWindow.Level(rawValue: DockLevel.rawValue + 1)
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        contentView = NSHostingView(rootView: content.overlay(Rectangle().stroke(Palette.rule)))
+    }
+
+    override var canBecomeKey: Bool { true }
+
+    func show(above anchor: NSRect, within screen: NSScreen) {
+        let size = contentView?.fittingSize ?? .zero
+        let f = screen.visibleFrame
+        let x = min(max(anchor.midX - size.width / 2, f.minX + 8), f.maxX - size.width - 8)
+        let y = min(anchor.maxY + 12, f.maxY - size.height - 8)
+        setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+        alphaValue = 0
+        orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.12; animator().alphaValue = 1 }
+        if let g = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in self?.dismiss() }) { monitors.append(g) }
+        if let l = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown], handler: { [weak self] e in
+            guard let self else { return e }
+            if e.type == .keyDown { if e.keyCode == 53 { self.dismiss(); return nil }; return e }
+            if e.window !== self { self.dismiss() }
+            return e
+        }) { monitors.append(l) }
+    }
+
+    func dismiss() {
+        guard !closed else { return }
+        closed = true
+        monitors.forEach(NSEvent.removeMonitor)
+        monitors = []
+        orderOut(nil)
+        onClose?()
     }
 }
