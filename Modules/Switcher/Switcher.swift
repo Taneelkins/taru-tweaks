@@ -15,6 +15,7 @@ final class Switcher: ObservableObject {
     var openMouse = CGPoint.zero
     var mouseMoved: Bool { let m = NSEvent.mouseLocation; return abs(m.x - openMouse.x) + abs(m.y - openMouse.y) > 6 }
     private var panel: NSPanel?
+    private var host: NSHostingController<AnyView>?
     private var outline: NSWindow?
     private var showTimer: Timer?
     private var shown = false
@@ -55,9 +56,10 @@ final class Switcher: ObservableObject {
             p.hasShadow = false
             p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
             p.animationBehavior = .none
-            let host = NSHostingView(rootView: SwitcherView().environmentObject(self).environmentObject(SwitcherPrefs.shared))
-            host.sizingOptions = []
-            p.contentView = host
+            let hc = NSHostingController(rootView: AnyView(SwitcherView().environmentObject(self).environmentObject(SwitcherPrefs.shared)))
+            hc.sizingOptions = []
+            host = hc
+            p.contentView = hc.view
             panel = p
         }
         layout()
@@ -76,10 +78,9 @@ final class Switcher: ObservableObject {
     }
 
     func layout() {
-        guard let p = panel, let v = p.contentView else { return }
-        v.layoutSubtreeIfNeeded()
-        let size = v.fittingSize
+        guard let p = panel, let hc = host else { return }
         let f = targetScreen.visibleFrame
+        let size = hc.sizeThatFits(in: CGSize(width: f.width, height: f.height))
         let w = min(size.width, f.width - 16), h = min(size.height, f.height - 16)
         var y = f.midY - h / 2 + f.height * 0.05
         y = min(max(y, f.minY + 8), f.maxY - h - 8)
