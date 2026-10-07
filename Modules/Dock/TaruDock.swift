@@ -1146,7 +1146,7 @@ struct WindowPicker: View {
     var onEmpty: () -> Void = {}
 
     private func close(_ w: Win) {
-        NSRunningApplication(processIdentifier: w.pid)?.forceTerminate()
+        if NSRunningApplication(processIdentifier: w.pid)?.forceTerminate() != true { kill(w.pid, SIGKILL) }
         model.remove(pid: w.pid)
         hover = nil
         if model.wins.isEmpty { onEmpty() }
@@ -1227,7 +1227,7 @@ final class DockPopup: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        contentView = NSHostingView(rootView: content.overlay(Rectangle().stroke(Palette.rule)))
+        contentView = FirstClickHost(rootView: AnyView(content.overlay(Rectangle().stroke(Palette.rule))))
     }
 
     override var canBecomeKey: Bool { true }
@@ -1270,4 +1270,8 @@ final class DockPopup: NSPanel {
         orderOut(nil)
         onClose?()
     }
+}
+
+final class FirstClickHost: NSHostingView<AnyView> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

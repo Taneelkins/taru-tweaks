@@ -517,6 +517,7 @@ struct TaruBarSettings: View {
 }
 
 final class BarHost: NSHostingView<TaruBarView> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func rightMouseDown(with event: NSEvent) {
         NSMenu.popUpContextMenu(TaruBar.shared.readoutMenu(), with: event, for: self)
     }
