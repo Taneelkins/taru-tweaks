@@ -116,7 +116,16 @@ struct Tile: View {
             .scaleEffect(selected ? 1.025 : 1)
             .animation(s.mouseMoved ? nil : .easeOut(duration: 0.07), value: selected)
             .contentShape(Rectangle())
-            .onHover { h in guard s.visible else { return }; hovering = h; if h && prefs.hoverSelects && s.mouseMoved && s.selected != index { s.select(index) } }
+            .onContinuousHover { phase in
+                guard s.visible else { return }
+                switch phase {
+                case .active:
+                    hovering = true
+                    if prefs.hoverSelects && s.mouseMoved && s.movedSinceLayout && s.selected != index { s.select(index) }
+                case .ended:
+                    hovering = false
+                }
+            }
             .onTapGesture { s.select(index); s.commit() }
     }
 

@@ -14,6 +14,8 @@ final class Switcher: ObservableObject {
     var visible = false
     var openMouse = CGPoint.zero
     var mouseMoved: Bool { let m = NSEvent.mouseLocation; return abs(m.x - openMouse.x) + abs(m.y - openMouse.y) > 6 }
+    var mouseAtLayout: NSPoint = .zero
+    var movedSinceLayout: Bool { let m = NSEvent.mouseLocation; return abs(m.x - mouseAtLayout.x) + abs(m.y - mouseAtLayout.y) > 3 }
     private var panel: NSPanel?
     private var host: NSHostingController<AnyView>?
     private var outline: NSWindow?
@@ -78,6 +80,7 @@ final class Switcher: ObservableObject {
     }
 
     func layout() {
+        mouseAtLayout = NSEvent.mouseLocation
         guard let p = panel, let hc = host else { return }
         let f = targetScreen.visibleFrame
         let size = hc.sizeThatFits(in: CGSize(width: f.width, height: f.height))
