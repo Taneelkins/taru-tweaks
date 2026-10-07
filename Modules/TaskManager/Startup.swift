@@ -19,8 +19,10 @@ final class StartupStore: ObservableObject {
     func shell(_ args: [String]) -> String {
         let p = Process(); p.executableURL = URL(fileURLWithPath: args[0]); p.arguments = Array(args.dropFirst())
         let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
-        try? p.run(); p.waitUntilExit()
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        try? p.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(data: data, encoding: .utf8) ?? ""
     }
 
     func reload() {

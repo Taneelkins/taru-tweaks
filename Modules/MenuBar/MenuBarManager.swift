@@ -18,6 +18,9 @@ final class MenuBarManager: ObservableObject {
 
     func start() {
         guard enabled, toggle == nil else { return }
+        let ud = UserDefaults.standard
+        if ud.object(forKey: "NSStatusItem Preferred Position tt.menubar.toggle") == nil { ud.set(6190.0, forKey: "NSStatusItem Preferred Position tt.menubar.toggle") }
+        if ud.object(forKey: "NSStatusItem Preferred Position tt.menubar.divider") == nil { ud.set(6200.0, forKey: "NSStatusItem Preferred Position tt.menubar.divider") }
         let t = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         t.autosaveName = "tt.menubar.toggle"
         t.button?.target = self
@@ -111,7 +114,9 @@ struct MenuBarSettings: View {
             SettingRow(title: "Hide when you click somewhere else") { Switch(on: $m.hideOnClickAway) }
             SettingRow(title: "Show the divider while expanded", detail: "The thin line marking where hidden icons start") { Switch(on: $m.showDivider) }
             SettingRow(title: "Shortcut", detail: "Show or hide the hidden icons") { MenuBarKey() }
-            SectionLabel(text: "How to choose what hides")
+            SectionLabel(text: "Icons")
+            MenuBarItemsList()
+            SectionLabel(text: "Or arrange by hand")
             VStack(alignment: .leading, spacing: 6) {
                 Text("1. Click ‹ to show everything. A thin divider appears.")
                 Text("2. Hold ⌘ and drag any icon to the LEFT of the divider to hide it, or to the right to keep it visible.")

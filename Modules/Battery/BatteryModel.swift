@@ -187,8 +187,10 @@ final class BatteryModel: ObservableObject {
             p.executableURL = URL(fileURLWithPath: "/usr/bin/top")
             p.arguments = ["-l", "2", "-s", "1", "-n", "8", "-o", "power", "-stats", "command,power"]
             let pipe = Pipe(); p.standardOutput = pipe
-            try? p.run(); p.waitUntilExit()
-            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            try? p.run()
+            let raw = pipe.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            let out = String(data: raw, encoding: .utf8) ?? ""
             guard let last = out.components(separatedBy: "COMMAND").last else { return }
             let apps: [EnergyApp] = last.split(separator: "\n").dropFirst().compactMap { line in
                 let parts = line.split(separator: " ", omittingEmptySubsequences: true)
