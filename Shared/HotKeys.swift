@@ -5,6 +5,7 @@ final class HotKeys {
     static let shared = HotKeys()
     private var refs: [UInt32: EventHotKeyRef] = [:]
     private var actions: [UInt32: () -> Void] = [:]
+    private(set) var statuses: [UInt32: OSStatus] = [:]
     private var installed = false
 
     private func install() {
@@ -41,7 +42,7 @@ final class HotKeys {
         if mask & 0x40000 != 0 { mods |= UInt32(controlKey) }
         if mask & 0x20000 != 0 { mods |= UInt32(shiftKey) }
         var ref: EventHotKeyRef?
-        RegisterEventHotKey(UInt32(key), mods, EventHotKeyID(signature: OSType(0x54415255), id: id), GetApplicationEventTarget(), 0, &ref)
+        statuses[id] = RegisterEventHotKey(UInt32(key), mods, EventHotKeyID(signature: OSType(0x54415255), id: id), GetApplicationEventTarget(), 0, &ref)
         if let ref { refs[id] = ref }
     }
 }

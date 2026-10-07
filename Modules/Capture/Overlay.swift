@@ -11,7 +11,7 @@ final class SelectionOverlay {
         case window(CGWindowID, DisplayShot, CGRect)
     }
 
-    private var windows: [OverlayWindow] = []
+    var windows: [OverlayWindow] = []
     private let done: (Result) -> Void
     private var finished = false
     let windowRects: [(CGWindowID, CGRect)]
@@ -23,7 +23,6 @@ final class SelectionOverlay {
         windowRects = SelectionOverlay.listWindows()
         tucked = NSApp.windows.filter { $0.isVisible && $0.level == .normal && !($0 is NSPanel) }
         tucked.forEach { $0.orderOut(nil) }
-        NSApp.activate(ignoringOtherApps: true)
         for shot in shots {
             let w = OverlayWindow(shot: shot, owner: self)
             windows.append(w)
@@ -31,8 +30,14 @@ final class SelectionOverlay {
         }
         let mouse = NSEvent.mouseLocation
         let key = windows.first { NSMouseInRect(mouse, $0.frame, false) } ?? windows.first
-        key?.makeKey()
+        key?.makeKeyAndOrderFront(nil)
         key?.makeFirstResponder(key?.view)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self, weak key] in
+            guard let self, !self.finished, let key, !key.isKeyWindow else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            key.makeKeyAndOrderFront(nil)
+            key.makeFirstResponder(key.view)
+        }
     }
 
     static func listWindows() -> [(CGWindowID, CGRect)] {
@@ -71,7 +76,10 @@ final class OverlayWindow: NSPanel {
     init(shot: DisplayShot, owner: SelectionOverlay) {
         view = OverlayView(shot: shot, owner: owner)
         super.init(contentRect: shot.screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        isFloatingPanel = true
         level = .screenSaver
+        hidesOnDeactivate = false
+        becomesKeyOnlyIfNeeded = false
         isOpaque = true
         backgroundColor = .black
         hasShadow = false

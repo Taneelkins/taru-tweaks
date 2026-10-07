@@ -81,7 +81,7 @@ final class CapturePrefs: ObservableObject {
 final class Capture {
     static let shared = Capture()
     let prefs = CapturePrefs.shared
-    private var overlay: SelectionOverlay?
+    var overlay: SelectionOverlay?
     private var content: SCShareableContent?
     private var previousApp: NSRunningApplication?
     var scrolling: ScrollCapture?
