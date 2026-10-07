@@ -26,11 +26,31 @@ struct Shortcut: Codable, Identifiable, Equatable {
     var ordering: Ordering = .recent
     var release: Release = .focus
     var skipSameApp = true
+    var appsOnly = false
 
     static let defaults: [Shortcut] = [
         Shortcut(),
-        Shortcut(holdMask: 0x100000, key: 50, apps: .active, skipSameApp: false)
+        Shortcut(holdMask: 0x100000, key: 50, apps: .active, skipSameApp: false),
+        Shortcut(holdMask: 0x80000, key: 48, minimized: .show, hidden: .show, windowless: .show, appsOnly: true)
     ]
+
+    init(id: UUID = UUID(), enabled: Bool = true, holdMask: UInt64 = 0x100000, key: Int64 = 48, apps: AppsFilter = .all, spaces: SpacesFilter = .all, screens: ScreensFilter = .all,
+         minimized: Visibility = .end, hidden: Visibility = .end, fullscreen: Visibility = .show, windowless: Visibility = .hide, ordering: Ordering = .recent, release: Release = .focus,
+         skipSameApp: Bool = true, appsOnly: Bool = false) {
+        self.id = id; self.enabled = enabled; self.holdMask = holdMask; self.key = key; self.apps = apps; self.spaces = spaces; self.screens = screens
+        self.minimized = minimized; self.hidden = hidden; self.fullscreen = fullscreen; self.windowless = windowless; self.ordering = ordering; self.release = release
+        self.skipSameApp = skipSameApp; self.appsOnly = appsOnly
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Shortcut()
+        func v<T: Decodable>(_ k: CodingKeys, _ def: T) -> T { (try? c.decodeIfPresent(T.self, forKey: k)) ?? def }
+        id = v(.id, d.id); enabled = v(.enabled, d.enabled); holdMask = v(.holdMask, d.holdMask); key = v(.key, d.key); apps = v(.apps, d.apps)
+        spaces = v(.spaces, d.spaces); screens = v(.screens, d.screens); minimized = v(.minimized, d.minimized); hidden = v(.hidden, d.hidden)
+        fullscreen = v(.fullscreen, d.fullscreen); windowless = v(.windowless, d.windowless); ordering = v(.ordering, d.ordering); release = v(.release, d.release)
+        skipSameApp = v(.skipSameApp, d.skipSameApp); appsOnly = v(.appsOnly, d.appsOnly)
+    }
 }
 
 struct AppException: Codable, Identifiable, Equatable {
@@ -68,7 +88,10 @@ final class SwitcherPrefs: ObservableObject {
     @Published var enabled: Bool { didSet { d.set(enabled, forKey: "switcherEnabled"); enabled ? SkyLight.moveNativeSwitcherToOption() : SkyLight.restoreNativeSwitcher() } }
 
     init() {
-        shortcuts = SwitcherPrefs.load("shortcuts") ?? Shortcut.defaults
+        var sc: [Shortcut] = SwitcherPrefs.load("shortcuts") ?? Shortcut.defaults
+        if !d.bool(forKey: "migrated.appsShortcut"), !sc.contains(where: { $0.appsOnly }), sc.count < 5 { sc.append(Shortcut.defaults[2]) }
+        d.set(true, forKey: "migrated.appsShortcut")
+        shortcuts = sc
         exceptions = SwitcherPrefs.load("exceptions") ?? []
         style = Style(rawValue: d.string(forKey: "style") ?? "") ?? .thumbs
         size = TileSize(rawValue: d.string(forKey: "size") ?? "") ?? .auto

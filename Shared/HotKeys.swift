@@ -19,7 +19,18 @@ final class HotKeys {
         }, 1, &spec, nil, nil)
     }
 
+    private var ready = false
+    private var pending: [() -> Void] = []
+
+    func start() {
+        ready = true
+        install()
+        let p = pending; pending = []
+        p.forEach { $0() }
+    }
+
     func set(_ id: UInt32, mask: UInt64, key: Int64, enabled: Bool = true, action: @escaping () -> Void) {
+        guard ready else { pending.append { [weak self] in self?.set(id, mask: mask, key: key, enabled: enabled, action: action) }; return }
         install()
         if let r = refs[id] { UnregisterEventHotKey(r); refs[id] = nil }
         actions[id] = action

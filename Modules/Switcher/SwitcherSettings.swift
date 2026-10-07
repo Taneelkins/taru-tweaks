@@ -24,7 +24,7 @@ struct SwitcherSettings: View {
 
     var shortcuts: some View {
         VStack(alignment: .leading, spacing: 14) {
-            PageTitle(title: "Window Switcher", subtitle: "Every window, every Space, with live previews. macOS's own app switcher stays on ⌥⇥.")
+            PageTitle(title: "Window Switcher", subtitle: "Every window, every Space, with live previews. ⌥⇥ switches apps like macOS does.")
             HStack(spacing: 6) {
                 ForEach(prefs.shortcuts.indices, id: \.self) { i in
                     Button { shortcutIndex = i } label: {
@@ -59,9 +59,10 @@ struct SwitcherSettings: View {
                     SettingRow(title: "Apps with no open window") { Seg(options: [("Show", Visibility.show), ("At the end", Visibility.end), ("Hide", Visibility.hide)], value: b.windowless) }
                     SettingRow(title: "Order") { Seg(options: [("Recently used", Ordering.recent), ("Newest", Ordering.created), ("A–Z", Ordering.alphabetical), ("Space", Ordering.space)], value: b.ordering) }
                     SettingRow(title: "Quick tab skips the current app's other windows", detail: "One tap always lands in a different app") { Toggle("", isOn: b.skipSameApp).toggleStyle(.switch).labelsHidden() }
+                    SettingRow(title: "One icon per app", detail: "Works like the macOS app switcher") { Toggle("", isOn: b.appsOnly).toggleStyle(.switch).labelsHidden() }
                 }
             }
-            Text("macOS's own app switcher lives on ⌥⇥ while Arsenal runs.").font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash).padding(.top, 6)
+            Text("Shortcut 3 (⌥⇥) is an app switcher like macOS's own.").font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash).padding(.top, 6)
         }
     }
 

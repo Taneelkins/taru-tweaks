@@ -64,6 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         debugHooks()
         registerTaskManagerKey()
         VaultController.shared.registerKeys()
+        HotKeys.shared.start()
+        Responsiveness.shared.start()
         updateDockIcon()
         for sig in [SIGTERM, SIGINT] {
             signal(sig, SIG_IGN)
@@ -121,6 +123,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                          "titles": list.prefix(12).map { "\($0.appName) | \($0.title) | cur:\($0.onCurrentSpace) min:\($0.minimized) id:\($0.id) thumb:\(Thumbnails.shared.cache[$0.id] != nil)" }]
                 if let d = try? JSONSerialization.data(withJSONObject: st, options: .prettyPrinted) { try? d.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-bench.json")) }
             }
+        }
+        dc.addObserver(forName: .init("com.taru.tweaks.state"), object: nil, queue: .main) { _ in
+            let sw = Switcher.shared
+            let st: [String: Any] = ["visible": sw.visible, "count": sw.windows.count, "selected": sw.selected, "searching": sw.searching, "query": sw.query,
+                                     "titles": sw.windows.prefix(10).map { "\($0.appName) | \($0.title)" },
+                                     "selectedTitle": sw.windows.indices.contains(sw.selected) ? "\(sw.windows[sw.selected].appName) | \(sw.windows[sw.selected].title)" : "",
+                                     "front": NSWorkspace.shared.frontmostApplication?.localizedName ?? "",
+                                     "native1": SkyLight.hotKeyValue(1), "native27": SkyLight.hotKeyEnabled(27),
+                                     "xdrOn": Brightness.shared.on, "xdrFactor": Brightness.shared.factor, "xdrNote": Brightness.shared.note,
+                                     "vault": Vault.shared.status, "vaultItems": Vault.shared.items.count]
+            if let d = try? JSONSerialization.data(withJSONObject: st, options: .prettyPrinted) { try? d.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-state.json")) }
         }
         dc.addObserver(forName: .init("com.taru.tweaks.open"), object: nil, queue: .main) { [weak self] n in
             if (n.object as? String) == "taskmanager" { self?.openTaskManager() } else { self?.openSettings((n.object as? String) ?? "general") }
@@ -229,7 +242,7 @@ struct MainMenu: View {
                 Text("TARU").font(.system(size: 18, weight: .heavy, design: .monospaced)).tracking(3)
                 Text("TWEAKS").font(.system(size: 11, weight: .bold, design: .monospaced)).tracking(4).opacity(0.8)
             }.foregroundStyle(theme.accent)
-            row("Window switcher", "⌘⇥ · ⌥⇥ macOS", $switcher.enabled)
+            row("Window switcher", "⌘⇥ windows · ⌥⇥ apps", $switcher.enabled)
             row("Show Desktop", "\(modifierString(switcher.desktopMask))\(keyString(switcher.desktopKey))", $switcher.showDesktop)
             row("XDR Boost", "\(bright.nits) nits", $bright.on)
             HStack { Text("Task Manager").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.bone); Spacer(); Text("⌃⇧Esc").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash) }

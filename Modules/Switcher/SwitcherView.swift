@@ -7,7 +7,7 @@ struct SwitcherView: View {
     @ObservedObject var theme = Theme.shared
 
     static func tileWidth(_ prefs: SwitcherPrefs, count: Int, screen: CGFloat) -> CGFloat {
-        switch prefs.style {
+        switch Switcher.shared.style {
         case .titles: return 420
         case .icons:
             switch prefs.size { case .small: return 92; case .medium: return 120; case .large: return 150; case .auto: return count > 14 ? 96 : 124 }
@@ -23,7 +23,7 @@ struct SwitcherView: View {
     }
 
     static func columns(count: Int, prefs: SwitcherPrefs, screen: CGFloat) -> Int {
-        if prefs.style == .titles { return 1 }
+        if Switcher.shared.style == .titles { return 1 }
         let w = tileWidth(prefs, count: count, screen: screen) + 12
         let maxCols = max(1, Int((screen * prefs.maxWidth - 40) / w))
         return max(1, min(count, maxCols))
@@ -35,7 +35,7 @@ struct SwitcherView: View {
         let cols = Self.columns(count: s.windows.count, prefs: prefs, screen: width)
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                Text("SWITCH").font(.system(size: 12, weight: .heavy, design: .monospaced)).tracking(3).foregroundStyle(theme.accent)
+                Text(s.shortcut?.appsOnly == true ? "APPS" : "SWITCH").font(.system(size: 12, weight: .heavy, design: .monospaced)).tracking(3).foregroundStyle(theme.accent)
                 if s.searching || !s.query.isEmpty {
                     HStack(spacing: 6) {
                         Image(systemName: "magnifyingglass").foregroundStyle(theme.accent)
@@ -96,7 +96,7 @@ struct Tile: View {
     }
 
     @ViewBuilder var content: some View {
-        switch prefs.style {
+        switch s.style {
         case .thumbs:
             VStack(alignment: .leading, spacing: 6) {
                 ZStack(alignment: .bottomLeading) {

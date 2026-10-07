@@ -18,17 +18,11 @@ struct ProcRow: Identifiable, Equatable {
 }
 
 enum Unresponsive {
-    typealias ConnFn = @convention(c) () -> Int32
-    static let connection: Int32 = dlsym(dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY), "SLSMainConnectionID").map { unsafeBitCast($0, to: ConnFn.self)() } ?? 0
-    typealias Fn = @convention(c) (Int32, UnsafePointer<ProcessSerialNumber>) -> Bool
-    static let fn: Fn? = dlsym(dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY), "SLSEventIsAppUnresponsive").map { unsafeBitCast($0, to: Fn.self) }
-    typealias PSNFn = @convention(c) (pid_t, UnsafeMutablePointer<ProcessSerialNumber>) -> OSStatus
-    static let psnFor: PSNFn? = dlsym(dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", RTLD_LAZY), "GetProcessForPID").map { unsafeBitCast($0, to: PSNFn.self) }
-    static func check(_ pid: pid_t) -> Bool {
-        guard let fn, let psnFor else { return false }
-        var psn = ProcessSerialNumber()
-        guard psnFor(pid, &psn) == noErr else { return false }
-        return withUnsafePointer(to: &psn) { fn(connection, $0) }
+    static let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/TaruTweaks/hung.json")
+    static func hungSet() -> Set<pid_t> {
+        guard let d = try? Data(contentsOf: file), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let t = j["updated"] as? Double, Date().timeIntervalSince1970 - t < 10, let h = j["hung"] as? [Int] else { return [] }
+        return Set(h.map { pid_t($0) })
     }
 }
 
@@ -37,6 +31,7 @@ final class ProcessStore: ObservableObject {
     @Published var apps: [ProcRow] = []
     @Published var background: [ProcRow] = []
     @Published var hiddenSystemCount = 0
+    @Published var everything: [pid_t: ProcRow] = [:]
     private var last: [pid_t: (UInt64, Double)] = [:]
     private var timer: Timer?
     private let tb: Double = { var i = mach_timebase_info(); mach_timebase_info(&i); return Double(i.numer) / Double(i.denom) }()
@@ -80,6 +75,7 @@ final class ProcessStore: ObservableObject {
                 rows[pid] = ProcRow(id: pid, name: name, path: path, user: user, cpu: cpu, memory: ok ? task.pti_resident_size : 0, threads: ok ? Int(task.pti_threadnum) : 0, ppid: pid_t(bsd.pbi_ppid), isApp: app != nil)
             }
             var apps: [ProcRow] = [], bg: [ProcRow] = []
+            let hung = Unresponsive.hungSet()
             for (pid, r) in rows where r.isApp {
                 var row = r
                 var stack = [pid], kids: [pid_t] = []
@@ -89,7 +85,7 @@ final class ProcessStore: ObservableObject {
                 row.children = kids
                 row.groupCPU = r.cpu + kids.compactMap { rows[$0]?.cpu }.reduce(0, +)
                 row.groupMemory = r.memory + kids.compactMap { rows[$0]?.memory }.reduce(0, +)
-                row.notResponding = Unresponsive.check(pid)
+                row.notResponding = hung.contains(pid)
                 apps.append(row)
             }
             let owned = Set(apps.flatMap { $0.children })
@@ -99,6 +95,9 @@ final class ProcessStore: ObservableObject {
                 self.apps = apps
                 self.background = bg
                 self.hiddenSystemCount = hidden
+                var all = rows
+                for (k, v) in all { var x = v; x.groupCPU = v.cpu; x.groupMemory = v.memory; x.notResponding = apps.first { $0.id == k }?.notResponding ?? false; all[k] = x }
+                self.everything = all
             }
         }
     }

@@ -204,6 +204,15 @@ final class WindowEngine {
         }
         let head = wins.filter { !atEnd($0) }, tail = wins.filter(atEnd)
         wins = head + tail
+        if s.appsOnly {
+            var seen = Set<pid_t>(), apps: [Win] = []
+            for w in wins where !seen.contains(w.pid) {
+                seen.insert(w.pid)
+                var a = w; a.title = w.appName; a.windowless = true
+                apps.append(a)
+            }
+            return apps
+        }
         if s.skipSameApp, s.apps == .all, wins.count > 2, let f = wins.first {
             let same = wins.dropFirst().filter { $0.pid == f.pid }
             let rest = wins.dropFirst().filter { $0.pid != f.pid }

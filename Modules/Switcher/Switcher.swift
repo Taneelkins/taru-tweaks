@@ -10,6 +10,7 @@ final class Switcher: ObservableObject {
     @Published var searching = false
     var all: [Win] = []
     var shortcut: Shortcut?
+    var style: Style { shortcut?.appsOnly == true ? .icons : SwitcherPrefs.shared.style }
     var visible = false
     var openMouse = CGPoint.zero
     var mouseMoved: Bool { let m = NSEvent.mouseLocation; return abs(m.x - openMouse.x) + abs(m.y - openMouse.y) > 6 }
@@ -35,7 +36,7 @@ final class Switcher: ObservableObject {
         if prefs.delay <= 0 || gesture || sc.release == .stay { present() } else {
             showTimer = Timer.scheduledTimer(withTimeInterval: prefs.delay, repeats: false) { [weak self] _ in self?.present() }
         }
-        if prefs.style == .thumbs {
+        if style == .thumbs {
             let stale = all.filter { $0.onCurrentSpace && !$0.minimized && !$0.hidden && !$0.windowless && Thumbnails.shared.isStale($0.id, 8) }.map(\.id)
             Thumbnails.shared.capture(stale)
         }

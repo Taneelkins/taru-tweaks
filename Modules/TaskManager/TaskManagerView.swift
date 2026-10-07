@@ -1,5 +1,4 @@
 import SwiftUI
-import Charts
 import AppKit
 
 struct TaskManagerView: View {
@@ -51,9 +50,9 @@ struct ProcessesTab: View {
         let f = query.isEmpty ? rows : rows.filter { $0.name.localizedCaseInsensitiveContains(query) || "\($0.id)".contains(query) }
         switch sort {
         case "name": return f.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        case "memory": return f.sorted { $0.groupMemory > $1.groupMemory }
+        case "memory": return f.sorted { ($0.groupMemory, $1.name) > ($1.groupMemory, $0.name) }
         case "pid": return f.sorted { $0.id < $1.id }
-        default: return f.sorted { $0.groupCPU > $1.groupCPU }
+        default: return f.sorted { (($0.notResponding ? 1 : 0), $0.groupCPU, $1.name) > (($1.notResponding ? 1 : 0), $1.groupCPU, $0.name) }
         }
     }
 
@@ -68,6 +67,11 @@ struct ProcessesTab: View {
             header
             ScrollView {
                 LazyVStack(spacing: 0) {
+                    if !query.isEmpty {
+                        let hits = sorted(Array(store.everything.values))
+                        group("MATCHES (\(hits.count))")
+                        ForEach(hits) { r in row(r, depth: 0) }
+                    } else {
                     group("APPS (\(store.apps.count))")
                     ForEach(sorted(store.apps)) { r in
                         row(r, depth: 0)
@@ -77,11 +81,12 @@ struct ProcessesTab: View {
                     }
                     group("BACKGROUND PROCESSES (\(store.background.count))")
                     ForEach(sorted(store.background)) { r in row(r, depth: 0) }
+                    }
                 }
             }
             HStack {
                 Spacer()
-                if let pid = selected, let r = (store.apps + store.background).first(where: { $0.id == pid }) {
+                if let pid = selected, let r = (store.apps + store.background).first(where: { $0.id == pid }) ?? store.everything[pid] {
                     Text(r.name).font(.system(size: 12, design: .monospaced)).foregroundStyle(Palette.ash)
                     TweakButton(title: "End task") { store.end(r.id, force: false, tree: r.isApp, children: r.children) }
                     TweakButton(title: "Force quit") { store.end(r.id, force: true, tree: r.isApp, children: r.children) }
@@ -157,13 +162,19 @@ struct Spark: View {
     let maxValue: Double?
     @ObservedObject var theme = Theme.shared
     var body: some View {
-        Chart(Array(values.enumerated()), id: \.offset) { i, v in
-            AreaMark(x: .value("t", i), y: .value("v", v)).foregroundStyle(theme.accent.opacity(0.18))
-            LineMark(x: .value("t", i), y: .value("v", v)).foregroundStyle(theme.accent)
+        Canvas { ctx, size in
+            guard values.count > 1 else { return }
+            let top = maxValue ?? max(1, (values.max() ?? 1) * 1.2)
+            let n = 60
+            let step = size.width / CGFloat(n - 1)
+            let start = CGFloat(n - values.count) * step
+            func pt(_ i: Int) -> CGPoint { CGPoint(x: start + CGFloat(i) * step, y: size.height - CGFloat(min(values[i], top) / top) * (size.height - 2) - 1) }
+            var line = Path(); line.move(to: pt(0))
+            for i in 1..<values.count { line.addLine(to: pt(i)) }
+            var fill = line; fill.addLine(to: CGPoint(x: pt(values.count - 1).x, y: size.height)); fill.addLine(to: CGPoint(x: start, y: size.height)); fill.closeSubpath()
+            ctx.fill(fill, with: .color(theme.accent.opacity(0.18)))
+            ctx.stroke(line, with: .color(theme.accent), lineWidth: 1.5)
         }
-        .chartXAxis(.hidden).chartYAxis(.hidden)
-        .chartYScale(domain: 0...(maxValue ?? max(1, (values.max() ?? 1) * 1.2)))
-        .chartXScale(domain: 0...59)
     }
 }
 

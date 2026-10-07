@@ -60,6 +60,17 @@ enum SkyLight {
         return true
     }
 
+    typealias GetHotKeyFn = @convention(c) (Int32, UnsafeMutablePointer<UInt16>, UnsafeMutablePointer<UInt16>, UnsafeMutablePointer<UInt32>) -> CGError
+    typealias IsEnabledFn = @convention(c) (Int32) -> Bool
+    static let getHotKey = fn("CGSGetSymbolicHotKeyValue", GetHotKeyFn.self)
+    static let isEnabled = fn("CGSIsSymbolicHotKeyEnabled", IsEnabledFn.self)
+    static func hotKeyValue(_ id: Int32) -> String {
+        var ch: UInt16 = 0, key: UInt16 = 0, mods: UInt32 = 0
+        guard getHotKey?(id, &ch, &key, &mods) == .success else { return "?" }
+        return "key \(key) mods 0x\(String(mods, radix: 16))"
+    }
+    static func hotKeyEnabled(_ id: Int32) -> Bool { isEnabled?(id) ?? true }
+
     static let cmd: UInt32 = 0x100000, opt: UInt32 = 0x80000, shift: UInt32 = 0x20000
     static func moveNativeSwitcherToOption() {
         _ = setHotKey?(1, 0xFFFF, 48, opt); _ = enableHotKey?(1, true)
