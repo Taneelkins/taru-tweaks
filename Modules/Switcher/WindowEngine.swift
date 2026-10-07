@@ -146,7 +146,9 @@ final class WindowEngine {
             }
             let title = info?.title.isEmpty == false ? info!.title : (w[kCGWindowName as String] as? String ?? "")
             let current = winSpaces.isEmpty || winSpaces.contains { spaces.current.contains($0) }
-            if pid == me && title.isEmpty { continue }
+            if pid == me {
+                guard let nw = NSApp.windows.first(where: { $0.windowNumber == Int(id) }), nw.isVisible || nw.isMiniaturized, nw.level == .normal, !(nw is NSPanel) else { continue }
+            }
             var win = Win(id: id, pid: pid, bundleID: app.bundleIdentifier, appName: app.localizedName ?? "", title: title, frame: frame)
             win.order = result.count
             win.minimized = info?.minimized ?? false
@@ -212,8 +214,10 @@ final class WindowEngine {
 
     func focus(_ w: Win) {
         if w.pid == ProcessInfo.processInfo.processIdentifier {
+            guard let nw = NSApp.windows.first(where: { $0.windowNumber == Int(w.id) }), nw.isVisible || nw.isMiniaturized else { return }
             NSApp.activate(ignoringOtherApps: true)
-            NSApp.windows.first { $0.windowNumber == Int(w.id) }?.makeKeyAndOrderFront(nil)
+            if nw.isMiniaturized { nw.deminiaturize(nil) }
+            nw.makeKeyAndOrderFront(nil)
             mru.removeAll { $0 == w.id }; mru.insert(w.id, at: 0)
             return
         }
