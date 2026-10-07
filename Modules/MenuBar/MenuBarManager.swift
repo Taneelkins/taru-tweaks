@@ -15,6 +15,7 @@ final class MenuBarManager: ObservableObject {
     private var timer: Timer?
     private var clickMonitor: Any?
     private let wide: CGFloat = 10_000
+    private var relaunchObserver: Any?
 
     func start() {
         guard enabled, toggle == nil else { return }
@@ -34,6 +35,12 @@ final class MenuBarManager: ObservableObject {
         divider = d
         collapsed = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.apply() }
+        if relaunchObserver == nil {
+            relaunchObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] n in
+                guard (n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier == "com.apple.controlcenter" else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self?.collapsed = true; self?.apply() }
+            }
+        }
     }
 
     func stop() {
