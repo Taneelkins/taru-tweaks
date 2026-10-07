@@ -35,7 +35,10 @@ final class Switcher: ObservableObject {
         if prefs.delay <= 0 || gesture || sc.release == .stay { present() } else {
             showTimer = Timer.scheduledTimer(withTimeInterval: prefs.delay, repeats: false) { [weak self] _ in self?.present() }
         }
-        if prefs.style == .thumbs { Thumbnails.shared.refresh(all) { [weak self] in self?.tick += 1 } }
+        if prefs.style == .thumbs {
+            let stale = all.filter { $0.onCurrentSpace && !$0.minimized && !$0.hidden && !$0.windowless && Thumbnails.shared.isStale($0.id, 8) }.map(\.id)
+            Thumbnails.shared.capture(stale)
+        }
     }
 
     private func present() {

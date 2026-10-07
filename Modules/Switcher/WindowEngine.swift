@@ -18,6 +18,7 @@ struct Win: Identifiable, Equatable {
     var onCurrentSpace = true
     var spaceNumber: Int?
     var windowless = false
+    var order = 0
     static func == (a: Win, b: Win) -> Bool { a.id == b.id && a.pid == b.pid && a.title == b.title && a.minimized == b.minimized }
 }
 
@@ -93,7 +94,7 @@ final class WindowEngine {
         let me = ProcessInfo.processInfo.processIdentifier
         let spaces = SkyLight.spaceIndex()
         var apps: [pid_t: NSRunningApplication] = [:]
-        for a in NSWorkspace.shared.runningApplications where a.activationPolicy == .regular && a.processIdentifier != me && !skipped.contains(a.bundleIdentifier ?? "") {
+        for a in NSWorkspace.shared.runningApplications where (a.activationPolicy == .regular || a.processIdentifier == me) && !skipped.contains(a.bundleIdentifier ?? "") {
             apps[a.processIdentifier] = a
         }
         var axInfo: [CGWindowID: (minimized: Bool, fullscreen: Bool, title: String, standard: Bool)] = [:]
@@ -126,7 +127,9 @@ final class WindowEngine {
             }
             let title = info?.title.isEmpty == false ? info!.title : (w[kCGWindowName as String] as? String ?? "")
             let current = winSpaces.isEmpty || winSpaces.contains { spaces.current.contains($0) }
+            if pid == me && title.isEmpty { continue }
             var win = Win(id: id, pid: pid, bundleID: app.bundleIdentifier, appName: app.localizedName ?? "", title: title, frame: frame)
+            win.order = result.count
             win.minimized = info?.minimized ?? false
             win.fullscreen = info?.fullscreen ?? false
             win.hidden = app.isHidden
@@ -135,7 +138,7 @@ final class WindowEngine {
             result.append(win)
             withWindows.insert(pid)
         }
-        for (pid, app) in apps where !withWindows.contains(pid) {
+        for (pid, app) in apps where !withWindows.contains(pid) && pid != me {
             var w = Win(id: CGWindowID(UInt32.max - UInt32(pid)), pid: pid, bundleID: app.bundleIdentifier, appName: app.localizedName ?? "", title: app.localizedName ?? "", frame: .zero)
             w.windowless = true
             w.hidden = app.isHidden
@@ -166,7 +169,7 @@ final class WindowEngine {
         }
         let rank = Dictionary(mru.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
         switch s.ordering {
-        case .recent: wins.sort { (rank[$0.id] ?? Int.max) < (rank[$1.id] ?? Int.max) }
+        case .recent: wins.sort { ((rank[$0.id] ?? Int.max), $0.order) < ((rank[$1.id] ?? Int.max), $1.order) }
         case .created: wins.sort { $0.id > $1.id }
         case .alphabetical: wins.sort { ($0.appName + $0.title).localizedCaseInsensitiveCompare($1.appName + $1.title) == .orderedAscending }
         case .space: wins.sort { ($0.spaceNumber ?? 0, rank[$0.id] ?? Int.max) < ($1.spaceNumber ?? 0, rank[$1.id] ?? Int.max) }
@@ -189,6 +192,12 @@ final class WindowEngine {
     }
 
     func focus(_ w: Win) {
+        if w.pid == ProcessInfo.processInfo.processIdentifier {
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.windows.first { $0.windowNumber == Int(w.id) }?.makeKeyAndOrderFront(nil)
+            mru.removeAll { $0 == w.id }; mru.insert(w.id, at: 0)
+            return
+        }
         guard let app = NSRunningApplication(processIdentifier: w.pid) else { return }
         if app.isHidden { app.unhide() }
         if w.windowless { app.activate(); return }
@@ -254,18 +263,48 @@ final class WindowEngine {
 final class Thumbnails {
     static let shared = Thumbnails()
     private(set) var cache: [CGWindowID: CGImage] = [:]
+    private var stamp: [CGWindowID: Date] = [:]
+    let dir: URL = {
+        let d = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TaruTweaks/thumbs")
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }()
+
+    init() {
+        let live = Set((CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []).compactMap { $0[kCGWindowNumber as String] as? CGWindowID })
+        for f in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] {
+            guard let id = CGWindowID(f.deletingPathExtension().lastPathComponent) else { continue }
+            if !live.contains(id) { try? FileManager.default.removeItem(at: f); continue }
+            if let src = CGImageSourceCreateWithURL(f as CFURL, nil), let img = CGImageSourceCreateImageAtIndex(src, 0, nil) { cache[id] = img; stamp[id] = .distantPast }
+        }
+    }
+
+    func store(_ id: CGWindowID, _ img: CGImage) {
+        cache[id] = img; stamp[id] = Date()
+        let url = dir.appendingPathComponent("\(id).png")
+        DispatchQueue.global(qos: .background).async {
+            guard let d = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else { return }
+            CGImageDestinationAddImage(d, img, nil); CGImageDestinationFinalize(d)
+        }
+    }
+
+    func isStale(_ id: CGWindowID, _ age: TimeInterval) -> Bool { Date().timeIntervalSince(stamp[id] ?? .distantPast) > age }
     var allowed: Bool { CGPreflightScreenCaptureAccess() }
     var count: Int { cache.count }
     var lastError = ""
 
     var onUpdate: (() -> Void)?
+    var stats: [String: Int] = ["ok": 0, "fail": 0, "missing": 0]
 
     func capture(_ ids: [CGWindowID]) {
         guard allowed, !ids.isEmpty else { return }
         Task {
             guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) else { return }
+            let found = Set(content.windows.map(\.windowID))
+            await MainActor.run { self.stats["missing", default: 0] += ids.filter { !found.contains($0) }.count }
             for sw in content.windows where ids.contains(sw.windowID) {
-                if let img = await shot(sw) { await MainActor.run { self.cache[sw.windowID] = img; self.onUpdate?() } }
+                if let img = await shot(sw) { await MainActor.run { self.store(sw.windowID, img); self.stats["ok", default: 0] += 1; self.onUpdate?() } }
+                else { await MainActor.run { self.stats["fail", default: 0] += 1 } }
             }
         }
     }
@@ -299,7 +338,7 @@ final class Thumbnails {
                     }
                 }
                 for await (id, img) in group {
-                    if let img { await MainActor.run { self.cache[id] = img; done() } }
+                    if let img { await MainActor.run { self.store(id, img); done() } }
                 }
             }
         }

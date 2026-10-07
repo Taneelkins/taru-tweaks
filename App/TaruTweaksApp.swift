@@ -53,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         WindowEngine.shared.start()
         Thumbnails.shared.onUpdate = { Switcher.shared.tick += 1 }
-        Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { _ in if CGPreflightScreenCaptureAccess() { WindowEngine.shared.snapshotVisible() } }
+        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in if CGPreflightScreenCaptureAccess() { WindowEngine.shared.snapshotVisible() } }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { WindowEngine.shared.snapshotVisible() }
         Input.shared.onLost = { [weak self] in self?.arm() }
         arm()
@@ -103,6 +103,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                      "windows": wins.count, "titled": wins.filter { !$0.title.isEmpty }.count, "thumbs": Thumbnails.shared.count,
                                      "helper": BatteryModel.shared.helperState.rawValue, "helperAlive": BatteryModel.shared.helperAlive, "xdr": Brightness.shared.supported]
             if let d = try? JSONSerialization.data(withJSONObject: st) { try? d.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-status.json")) }
+        }
+        dc.addObserver(forName: .init("com.taru.tweaks.bench"), object: nil, queue: .main) { _ in
+            var t = Date()
+            let all = WindowEngine.shared.all()
+            let tAll = Date().timeIntervalSince(t) * 1000
+            t = Date()
+            let list = WindowEngine.shared.list(for: SwitcherPrefs.shared.shortcuts[0])
+            let tList = Date().timeIntervalSince(t) * 1000
+            Thumbnails.shared.stats = ["ok": 0, "fail": 0, "missing": 0]
+            Thumbnails.shared.capture(all.map(\.id))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                let st: [String: Any] = ["allMs": Int(tAll), "listMs": Int(tList), "windows": all.count, "listed": list.count,
+                                         "onCurrentSpace": all.filter { $0.onCurrentSpace && !$0.minimized }.count, "cached": Thumbnails.shared.count,
+                                         "captureOK": Thumbnails.shared.stats["ok"] ?? 0, "captureFail": Thumbnails.shared.stats["fail"] ?? 0, "notInSCK": Thumbnails.shared.stats["missing"] ?? 0,
+                                         "titles": list.prefix(12).map { "\($0.appName) | \($0.title) | cur:\($0.onCurrentSpace) min:\($0.minimized) id:\($0.id) thumb:\(Thumbnails.shared.cache[$0.id] != nil)" }]
+                if let d = try? JSONSerialization.data(withJSONObject: st, options: .prettyPrinted) { try? d.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-bench.json")) }
+            }
         }
         dc.addObserver(forName: .init("com.taru.tweaks.open"), object: nil, queue: .main) { [weak self] n in
             if (n.object as? String) == "taskmanager" { self?.openTaskManager() } else { self?.openSettings((n.object as? String) ?? "general") }
