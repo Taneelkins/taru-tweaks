@@ -136,6 +136,77 @@ final class Vault: ObservableObject {
         }
     }
 
+    @Published var awaitingCode = false
+    @Published var codePrompt = ""
+    private var loginProc: Process?
+    private var loginIn: FileHandle?
+    private var loginOut = ""
+
+    func startLogin(email: String, password: String, method: Int?, remember: Bool, done: @escaping (String?) -> Void) {
+        guard let bw else { done("Bitwarden CLI not installed"); return }
+        cancelLogin()
+        busy = true; awaitingCode = false; loginOut = ""; lastError = ""
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+        var args = ["-q", "/dev/null", bw, "login", email, "--passwordenv", "TT_BW_PASS", "--raw"]
+        if let method { args += ["--method", "\(method)"] }
+        p.arguments = args
+        var e = ProcessInfo.processInfo.environment
+        e["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"; e["TT_BW_PASS"] = password; e["TERM"] = "dumb"; e["NO_COLOR"] = "1"
+        e.removeValue(forKey: "BW_NOINTERACTION")
+        p.environment = e
+        let out = Pipe(), inp = Pipe()
+        p.standardOutput = out; p.standardError = out; p.standardInput = inp
+        loginIn = inp.fileHandleForWriting
+        out.fileHandleForReading.readabilityHandler = { [weak self] h in
+            let chunk = String(data: h.availableData, encoding: .utf8) ?? ""
+            guard !chunk.isEmpty else { return }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.loginOut += chunk
+                let clean = self.loginOut.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[A-Za-z]", with: "", options: .regularExpression)
+                let lower = clean.lowercased()
+                if !self.awaitingCode && (lower.contains("code:") || lower.contains("verification code") || lower.contains("otp")) {
+                    self.awaitingCode = true
+                    self.codePrompt = lower.contains("new device") ? "Enter the new-device code Bitwarden just emailed you" : "Enter your two-step code"
+                    self.busy = false
+                }
+            }
+        }
+        p.terminationHandler = { [weak self] proc in
+            out.fileHandleForReading.readabilityHandler = nil
+            let rest = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.loginOut += rest
+                let clean = self.loginOut.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[A-Za-z]", with: "", options: .regularExpression)
+                let lines = clean.components(separatedBy: CharacterSet.newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                self.busy = false; self.awaitingCode = false; self.loginProc = nil; self.loginIn = nil
+                if proc.terminationStatus == 0, let last = lines.last, !last.contains(" "), last.count > 40 {
+                    self.session = last
+                    if remember { Keychain.save(password, account: "master"); self.hasStoredPassword = true }
+                    self.armLock(); self.status = "unlocked"; self.loadItems(); done(nil)
+                } else {
+                    let msg = lines.filter { !$0.lowercased().contains("code:") && !$0.lowercased().contains("password") }.last ?? "Sign-in failed"
+                    done(msg)
+                }
+                self.loginOut = ""
+                self.refreshStatus()
+            }
+        }
+        do { try p.run(); loginProc = p } catch { busy = false; done(error.localizedDescription) }
+    }
+
+    func submitCode(_ code: String) {
+        guard let h = loginIn else { return }
+        h.write(Data((code.trimmingCharacters(in: .whitespaces) + "\n").utf8))
+        awaitingCode = false; busy = true
+    }
+
+    func cancelLogin() {
+        loginProc?.terminate(); loginProc = nil; loginIn = nil; awaitingCode = false; busy = false
+    }
+
     func signInInTerminal() {
         let script = "tell application \"Terminal\" to do script \"/opt/homebrew/bin/bw login\"\ntell application \"Terminal\" to activate"
         NSAppleScript(source: script)?.executeAndReturnError(nil)

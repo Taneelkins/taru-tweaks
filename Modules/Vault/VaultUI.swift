@@ -207,8 +207,7 @@ struct VaultSettings: View {
     @State var email = ""
     @State var password = ""
     @State var code = ""
-    @State var method = 0
-    @State var needsCode = false
+    @State var method = -1
     @State var remember = true
     @State var note = ""
     @State var newPassword = ""
@@ -247,25 +246,31 @@ struct VaultSettings: View {
                 }
                 SettingRow(title: "Email") { TextField("you@example.com", text: $email).textFieldStyle(.roundedBorder).frame(width: 260) }
                 SettingRow(title: "Master password") { SecureField("", text: $password).textFieldStyle(.roundedBorder).frame(width: 260) }
-                if needsCode {
-                    SettingRow(title: "Two-step code") {
+                SettingRow(title: "Two-step login", detail: "Pick how you get your codes, if you use two-step login") {
+                    Picker("", selection: $method) { Text("None / not sure").tag(-1); Text("Authenticator app").tag(0); Text("Email").tag(1); Text("YubiKey").tag(3) }.labelsHidden().frame(width: 170)
+                }
+                SettingRow(title: "Remember with Touch ID", detail: "Stores the master password in your Keychain so the vault unlocks with Touch ID") { Switch(on: $remember) }
+                if v.awaitingCode {
+                    SettingRow(title: "Code", detail: v.codePrompt) {
                         HStack {
-                            Picker("", selection: $method) { Text("Authenticator").tag(0); Text("Email").tag(1); Text("YubiKey").tag(3) }.labelsHidden().frame(width: 130)
-                            TextField("123456", text: $code).textFieldStyle(.roundedBorder).frame(width: 120)
+                            TextField("123456", text: $code).textFieldStyle(.roundedBorder).frame(width: 140).onSubmit { v.submitCode(code); code = "" }
+                            TweakButton(title: "Submit") { v.submitCode(code); code = "" }
                         }
                     }
                 }
-                SettingRow(title: "Remember with Touch ID", detail: "Stores the master password in your Keychain so the vault unlocks with Touch ID") { Switch(on: $remember) }
                 HStack(spacing: 10) {
-                    TweakButton(title: v.busy ? "Signing in…" : "Sign in") {
-                        v.login(email: email, password: password, method: needsCode ? method : nil, code: code, remember: remember) { err in
-                            if let err {
-                                if err.lowercased().contains("two-step") || err.lowercased().contains("code") { needsCode = true; note = "Enter your two-step code and sign in again" } else { note = err }
-                            } else { password = ""; code = ""; note = "Signed in" }
+                    if v.awaitingCode || v.busy {
+                        TweakButton(title: "Cancel") { v.cancelLogin(); note = "" }
+                    } else {
+                        TweakButton(title: "Sign in") {
+                            note = "Signing in…"
+                            v.startLogin(email: email, password: password, method: method >= 0 ? method : nil, remember: remember) { err in
+                                if let err { note = err } else { password = ""; note = "Signed in" }
+                            }
                         }
                     }
                     TweakButton(title: "Sign in using Terminal") { v.signInInTerminal() }
-                    Text(note).font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash)
+                    Text(v.busy ? "Working…" : note).font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash).lineLimit(2)
                 }.padding(.top, 12)
             } else if v.status != "no-cli" {
                 SectionLabel(text: "Touch ID unlock")
