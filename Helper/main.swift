@@ -84,7 +84,7 @@ final class Engine {
     var reason = "starting"
     var state = "idle"
     var sleepAssertion: IOPMAssertionID = 0
-    var clamshellOn = false
+    var clamshellOn: Bool?
     var appliedPowerMode = ""
 
     func setSleepBlocked(_ on: Bool) {
@@ -282,11 +282,11 @@ for f in ["config.json", "heartbeat"] where FileManager.default.fileExists(atPat
     lockDown(TweaksDir.appendingPathComponent(f).path, 0o664)
 }
 
-let selfPath = CommandLine.arguments[0]
+let selfPath = Bundle.main.executablePath ?? CommandLine.arguments[0]
 let selfStamp = (try? FileManager.default.attributesOfItem(atPath: selfPath)[.modificationDate] as? Date) ?? .distantPast
 RunLoop.main.add(Timer(timeInterval: 10, repeats: true) { _ in
     let now = (try? FileManager.default.attributesOfItem(atPath: selfPath)[.modificationDate] as? Date) ?? selfStamp
-    if now != selfStamp || !FileManager.default.fileExists(atPath: selfPath) { log("helper updated, restarting"); engine.restore(); exit(0) }
+    if now != selfStamp || !FileManager.default.fileExists(atPath: selfPath) { log("helper updated, restarting"); engine.restore(); engine.setClamshell(false); exit(0) }
 }, forMode: .common)
 migrateOldFuel()
 if !FileManager.default.fileExists(atPath: ConfigURL.path) { saveConfig(BatteryConfig()) }

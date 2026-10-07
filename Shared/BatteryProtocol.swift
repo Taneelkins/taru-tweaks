@@ -86,4 +86,4 @@ struct BatteryStatus: Codable {
     var helperVersion: Int
 }
 
-let HelperVersion = 3
+let HelperVersion = 4
