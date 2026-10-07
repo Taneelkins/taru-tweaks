@@ -61,6 +61,7 @@ final class TaruDock {
     private var monitors: [Any] = []
     private var hideWork: DispatchWorkItem?
     private var badgeTimer: Timer?
+    private var edgePoll: Timer?
     private var bag = Set<AnyCancellable>()
     private var started = false
     var holds = 0 { didSet { if holds <= 0 { holds = 0; pointerMoved() } } }
@@ -86,6 +87,14 @@ final class TaruDock {
         }
         badgeTimer?.invalidate()
         badgeTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in self?.checkAttention() }
+        edgePoll?.invalidate()
+        let poll = Timer(timeInterval: 0.12, repeats: true) { [weak self] _ in
+            guard let self, self.model.autohide else { return }
+            if self.shown { self.pointerMoved(); return }
+            if NSEvent.mouseLocation.y <= self.screen.frame.minY + 1.5 { self.pointerMoved() }
+        }
+        RunLoop.main.add(poll, forMode: .common)
+        edgePoll = poll
         if !model.autohide { show() }
     }
 
@@ -106,6 +115,7 @@ final class TaruDock {
         monitors.forEach(NSEvent.removeMonitor)
         monitors = []
         badgeTimer?.invalidate(); badgeTimer = nil
+        edgePoll?.invalidate(); edgePoll = nil
         panel.orderOut(nil)
         shown = false
         MacDock.restore()
