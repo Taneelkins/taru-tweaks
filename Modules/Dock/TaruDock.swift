@@ -1146,7 +1146,11 @@ struct WindowPicker: View {
     var onEmpty: () -> Void = {}
 
     private func close(_ w: Win) {
-        if NSRunningApplication(processIdentifier: w.pid)?.forceTerminate() != true { kill(w.pid, SIGKILL) }
+        let pid = w.pid
+        _ = NSRunningApplication(processIdentifier: pid)?.forceTerminate()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+        }
         model.remove(pid: w.pid)
         hover = nil
         if model.wins.isEmpty { onEmpty() }
