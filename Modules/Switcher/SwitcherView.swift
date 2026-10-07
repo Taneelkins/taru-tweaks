@@ -22,7 +22,7 @@ struct SwitcherView: View {
         }
     }
 
-    static func groupedWidth(visible: Int, screen: CGRect, prefs: SwitcherPrefs) -> CGFloat {
+    static func groupedWidth(visible: Int, expanded: Int, screen: CGRect, prefs: SwitcherPrefs) -> CGFloat {
         let maxW = screen.width * prefs.maxWidth - 40
         let maxH = screen.height * 0.86 - 70
         var w: CGFloat = prefs.size == .large ? 300 : prefs.size == .small ? 170 : 240
@@ -31,7 +31,8 @@ struct SwitcherView: View {
             let perRow = max(1, Int((maxW + 12) / (card + 12)))
             let rows = Int(ceil(Double(visible) / Double(perRow)))
             let h = CGFloat(rows) * (w * 0.62 + 46 + 28 + 20) + CGFloat(rows - 1) * 12
-            if h <= maxH { break }
+            let groupW = CGFloat(expanded) * (w + 16) + CGFloat(max(expanded - 1, 0)) * 10 + 20
+            if h <= maxH && groupW <= maxW { break }
             w -= 10
         }
         return w
@@ -70,7 +71,7 @@ struct SwitcherView: View {
                 let groups = AppGroup.make(s.windows)
                 let active = groups.first { g in g.items.contains { $0.0 == s.selected } }
                 let visible = groups.count + max(0, (active?.items.count ?? 1) - 1)
-                let gw = Self.groupedWidth(visible: visible, screen: s.targetScreen.visibleFrame, prefs: prefs)
+                let gw = Self.groupedWidth(visible: visible, expanded: active?.items.count ?? 1, screen: s.targetScreen.visibleFrame, prefs: prefs)
                 FlowLayout(spacing: 12, maxWidth: width * prefs.maxWidth - 40) {
                     ForEach(groups) { g in GroupCard(group: g, width: gw) }
                 }

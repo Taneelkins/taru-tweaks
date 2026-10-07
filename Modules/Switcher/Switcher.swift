@@ -55,7 +55,9 @@ final class Switcher: ObservableObject {
             p.hasShadow = false
             p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
             p.animationBehavior = .none
-            p.contentView = NSHostingView(rootView: SwitcherView().environmentObject(self).environmentObject(SwitcherPrefs.shared))
+            let host = NSHostingView(rootView: SwitcherView().environmentObject(self).environmentObject(SwitcherPrefs.shared))
+            host.sizingOptions = []
+            p.contentView = host
             panel = p
         }
         layout()
@@ -78,7 +80,10 @@ final class Switcher: ObservableObject {
         v.layoutSubtreeIfNeeded()
         let size = v.fittingSize
         let f = targetScreen.visibleFrame
-        p.setFrame(NSRect(x: f.midX - size.width / 2, y: f.midY - size.height / 2 + f.height * 0.05, width: size.width, height: size.height), display: true)
+        let w = min(size.width, f.width - 16), h = min(size.height, f.height - 16)
+        var y = f.midY - h / 2 + f.height * 0.05
+        y = min(max(y, f.minY + 8), f.maxY - h - 8)
+        p.setFrame(NSRect(x: (f.midX - w / 2).rounded(), y: y.rounded(), width: w, height: h), display: true)
     }
 
     var grouping: Bool { SwitcherPrefs.shared.groupByApp && style == .thumbs }
@@ -97,11 +102,11 @@ final class Switcher: ObservableObject {
     func step(_ d: Int) {
         guard !windows.isEmpty else { return }
         selected = (selected + d + windows.count) % windows.count
-        if grouping && shown { layout() }
+        if grouping && shown { layout(); DispatchQueue.main.async { self.layout() } }
         updateOutline()
     }
 
-    func select(_ i: Int) { guard windows.indices.contains(i) else { return }; selected = i; if grouping && shown { layout() }; updateOutline() }
+    func select(_ i: Int) { guard windows.indices.contains(i) else { return }; selected = i; if grouping && shown { layout(); DispatchQueue.main.async { self.layout() } }; updateOutline() }
 
     func released() {
         guard let sc = shortcut else { commit(); return }
