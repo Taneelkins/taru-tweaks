@@ -376,7 +376,7 @@ final class DockView: NSView, NSPopoverDelegate {
     private var popup: DockPopup?
     private(set) var preferredSize = NSSize(width: 200, height: 70)
 
-    private var s: CGFloat { CGFloat(model.iconSize) }
+    private var s: CGFloat = 48
     private let gap: CGFloat = 8
     private let pad: CGFloat = 10
     private var activeRow: [DockTile] { pageTiles.indices.contains(model.activeIndex) ? pageTiles[model.activeIndex] : [] }
@@ -434,18 +434,24 @@ final class DockView: NSView, NSPopoverDelegate {
         (separators + bars + Array(hints.values)).forEach { $0.removeFromSuperlayer() }
         hints = [:]
         separators = []; bars = []
-        let size = s
-        fixedLeft = [DockTile(kind: .finder, page: -1, size: size)]
-        pageTiles = model.presets.enumerated().map { i, p in p.items.map { DockTile(kind: .item($0), page: i, size: size) } }
-        let pinned = Set(activeRow.compactMap { $0.url?.path })
-        var right: [DockTile] = []
+        let pinned = Set(model.presets.indices.contains(model.activeIndex) ? model.presets[model.activeIndex].items.map(\.path) : [])
+        var runningURLs: [URL] = []
         if model.showRunning {
             var seen = Set<String>()
             for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
                 guard let u = app.bundleURL, u.path != FinderPath, !pinned.contains(u.path), app.bundleIdentifier != Bundle.main.bundleIdentifier, seen.insert(u.path).inserted else { continue }
-                right.append(DockTile(kind: .running(u), page: -1, size: size))
+                runningURLs.append(u)
             }
         }
+        let slots = max(3, model.presets.map(\.items.count).max() ?? 0)
+        let count = CGFloat(1 + slots + runningURLs.count + 1)
+        let maxWidth = (NSScreen.screens.first?.frame.width ?? 1512) - 24
+        let fit = (maxWidth - 2 * pad - 16 - count * gap) / count
+        s = max(24, min(CGFloat(model.iconSize), fit.rounded(.down)))
+        let size = s
+        fixedLeft = [DockTile(kind: .finder, page: -1, size: size)]
+        pageTiles = model.presets.enumerated().map { i, p in p.items.map { DockTile(kind: .item($0), page: i, size: size) } }
+        var right: [DockTile] = runningURLs.map { DockTile(kind: .running($0), page: -1, size: size) }
         right.append(DockTile(kind: .trash, page: -1, size: size))
         fixedRight = right
         CATransaction.begin(); CATransaction.setDisableActions(true)
