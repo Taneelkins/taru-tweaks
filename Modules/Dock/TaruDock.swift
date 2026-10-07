@@ -7,26 +7,40 @@ let DockLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
 
 enum MacDock {
     static let domain = "com.apple.dock" as CFString
+    static let hidden: [(String, CFPropertyList)] = [("autohide", kCFBooleanTrue), ("autohide-delay", NSNumber(value: 1000.0)), ("no-bouncing", kCFBooleanTrue),
+                                                    ("launchanim", kCFBooleanFalse), ("tilesize", NSNumber(value: 16)), ("magnification", kCFBooleanFalse)]
 
     static func hide() {
         let d = UserDefaults.standard
-        guard !d.bool(forKey: "dock.mac.hidden") else { return }
         CFPreferencesAppSynchronize(domain)
-        d.set(CFPreferencesCopyAppValue("autohide" as CFString, domain) as? Bool ?? false, forKey: "dock.mac.autohide")
-        if let delay = CFPreferencesCopyAppValue("autohide-delay" as CFString, domain) as? Double { d.set(delay, forKey: "dock.mac.delay") } else { d.removeObject(forKey: "dock.mac.delay") }
-        CFPreferencesSetAppValue("autohide" as CFString, kCFBooleanTrue, domain)
-        CFPreferencesSetAppValue("autohide-delay" as CFString, NSNumber(value: 1000.0), domain)
-        CFPreferencesAppSynchronize(domain)
+        var saved = d.dictionary(forKey: "dock.mac.saved") ?? [:]
+        if d.bool(forKey: "dock.mac.hidden"), saved.isEmpty {
+            saved["autohide"] = d.bool(forKey: "dock.mac.autohide")
+            saved["autohide-delay"] = d.object(forKey: "dock.mac.delay") ?? "unset"
+        }
+        var changed = false
+        for (key, value) in hidden {
+            let now = CFPreferencesCopyAppValue(key as CFString, domain)
+            if saved[key] == nil { saved[key] = now ?? ("unset" as CFPropertyList) }
+            if !(now.map { CFEqual($0, value) } ?? false) {
+                CFPreferencesSetAppValue(key as CFString, value, domain)
+                changed = true
+            }
+        }
+        d.set(saved, forKey: "dock.mac.saved")
         d.set(true, forKey: "dock.mac.hidden")
-        restart()
+        if changed { CFPreferencesAppSynchronize(domain); restart() }
     }
 
     static func restore() {
         let d = UserDefaults.standard
-        guard d.bool(forKey: "dock.mac.hidden") else { return }
-        CFPreferencesSetAppValue("autohide" as CFString, d.bool(forKey: "dock.mac.autohide") ? kCFBooleanTrue : kCFBooleanFalse, domain)
-        CFPreferencesSetAppValue("autohide-delay" as CFString, (d.object(forKey: "dock.mac.delay") as? Double).map { NSNumber(value: $0) }, domain)
+        guard d.bool(forKey: "dock.mac.hidden"), let saved = d.dictionary(forKey: "dock.mac.saved") else { return }
+        for (key, value) in saved {
+            let v: CFPropertyList? = (value as? String) == "unset" ? nil : value as CFPropertyList
+            CFPreferencesSetAppValue(key as CFString, v, domain)
+        }
         CFPreferencesAppSynchronize(domain)
+        d.removeObject(forKey: "dock.mac.saved")
         d.set(false, forKey: "dock.mac.hidden")
         restart()
     }
@@ -69,12 +83,28 @@ final class TaruDock {
             if let g = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged], handler: { [weak self] _ in self?.pointerMoved() }) { monitors.append(g) }
             if let l = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged], handler: { [weak self] e in self?.pointerMoved(); return e }) { monitors.append(l) }
         }
+        badgeTimer?.invalidate()
+        badgeTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in self?.checkAttention() }
         if !model.autohide { show() }
+    }
+
+    private func checkAttention() {
+        let raised = view.refreshBadges()
+        guard !raised.isEmpty else { return }
+        if !shown {
+            show()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak self] in
+                guard let self, self.shown, self.holds == 0, !self.panel.frame.insetBy(dx: -30, dy: -30).contains(NSEvent.mouseLocation) else { return }
+                self.hide()
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.view.attention(raised) }
     }
 
     private func disable() {
         monitors.forEach(NSEvent.removeMonitor)
         monitors = []
+        badgeTimer?.invalidate(); badgeTimer = nil
         panel.orderOut(nil)
         shown = false
         MacDock.restore()
@@ -110,9 +140,6 @@ final class TaruDock {
         hideWork?.cancel(); hideWork = nil
         guard !shown else { return }
         shown = true
-        view.refreshBadges()
-        badgeTimer?.invalidate()
-        badgeTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.view.refreshBadges() }
         panel.setFrame(targetFrame(shown: false), display: false)
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { c in
@@ -125,7 +152,6 @@ final class TaruDock {
     func hide() {
         guard shown, holds == 0, model.autohide else { return }
         shown = false
-        badgeTimer?.invalidate(); badgeTimer = nil
         view.endHover()
         NSAnimationContext.runAnimationGroup({ c in
             c.duration = 0.16
@@ -346,6 +372,7 @@ final class DockView: NSView, NSPopoverDelegate {
     private var dropTarget: (tile: DockTile?, index: Int?)?
     private var dropHold = false
     private var launching = Set<String>()
+    private var lastLabels: [String: String] = [:]
     private var popover: NSPopover?
     private var popoverMonitor: Any?
     private(set) var preferredSize = NSSize(width: 200, height: 70)
@@ -804,11 +831,12 @@ final class DockView: NSView, NSPopoverDelegate {
 
     // MARK: Badges
 
-    func refreshBadges() {
-        guard let macDock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return }
+    @discardableResult
+    func refreshBadges() -> [String] {
+        guard let macDock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return [] }
         var kids: CFTypeRef?
         AXUIElementCopyAttributeValue(AXUIElementCreateApplication(macDock.processIdentifier), kAXChildrenAttribute as CFString, &kids)
-        guard let list = (kids as? [AXUIElement])?.first else { return }
+        guard let list = (kids as? [AXUIElement])?.first else { return [] }
         var items: CFTypeRef?
         AXUIElementCopyAttributeValue(list, kAXChildrenAttribute as CFString, &items)
         var labels: [String: String] = [:]
@@ -821,6 +849,27 @@ final class DockView: NSView, NSPopoverDelegate {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         for t in fixedLeft + fixedRight + pageTiles.flatMap({ $0 }) { t.setBadge(t.url.flatMap { labels[$0.standardizedFileURL.path] }) }
         CATransaction.commit()
+        let raised = labels.filter { path, text in
+            guard let old = lastLabels[path] else { return true }
+            if let a = Int(text), let b = Int(old) { return a > b }
+            return text != old
+        }.map(\.key)
+        let first = lastLabels.isEmpty && !labels.isEmpty
+        lastLabels = labels
+        return first ? [] : raised
+    }
+
+    func attention(_ paths: [String]) {
+        for t in fixedLeft + activeRow + fixedRight {
+            guard let p = t.url?.standardizedFileURL.path, paths.contains(p) else { continue }
+            let a = CABasicAnimation(keyPath: "position.y")
+            a.byValue = 6
+            a.duration = 0.22
+            a.autoreverses = true
+            a.repeatCount = 3
+            a.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            t.icon.add(a, forKey: "attention")
+        }
     }
 
     // MARK: Files dragged in from Finder
