@@ -73,11 +73,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         TaruBar.shared.start()
         StatusItems.shared.start()
         Responsiveness.shared.start()
+        Awake.shared.start()
         updateDockIcon()
         for sig in [SIGTERM, SIGINT] {
             signal(sig, SIG_IGN)
             let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-            src.setEventHandler { Brightness.shared.stop(); SkyLight.restoreNativeSwitcher(); exit(0) }
+            src.setEventHandler { Brightness.shared.stop(); Awake.shared.stop(); SkyLight.restoreNativeSwitcher(); exit(0) }
             src.resume(); _ = Unmanaged.passRetained(src)
         }
         let event = NSAppleEventManager.shared().currentAppleEvent
@@ -138,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                      "selectedTitle": sw.windows.indices.contains(sw.selected) ? "\(sw.windows[sw.selected].appName) | \(sw.windows[sw.selected].title)" : "",
                                      "front": NSWorkspace.shared.frontmostApplication?.localizedName ?? "",
                                      "native1": SkyLight.hotKeyValue(1), "native27": SkyLight.hotKeyEnabled(27),
-                                     "dockPreset": DockPresets.shared.activeName, "dockCount": DockPresets.shared.presets.count, "dockShown": TaruDock.shared.shown, "wpPlaying": Wallpaper.shared.playing, "capOverlay": Capture.shared.overlay != nil, "capWindows": Capture.shared.overlay?.windows.map { "\($0.isVisible) key:\($0.isKeyWindow) lvl:\($0.level.rawValue) \(NSStringFromRect($0.frame))" } ?? [], "appActive": NSApp.isActive, "hotkeys": HotKeys.shared.statuses.map { "\($0.key)=\($0.value)" }, "barCPU": TaruBarModel.shared.cpu.last ?? -1, "barTemp": TaruBarModel.shared.temperature ?? -999, "wpCurrent": Wallpaper.shared.current, "dockFrame": NSStringFromRect(TaruDock.shared.panel.frame), "xdrOn": Brightness.shared.on, "xdrFactor": Brightness.shared.factor, "xdrNote": Brightness.shared.note]
+                                     "dockPreset": DockPresets.shared.activeName, "dockCount": DockPresets.shared.presets.count, "dockShown": TaruDock.shared.shown, "wpPlaying": Wallpaper.shared.playing, "capOverlay": Capture.shared.overlay != nil, "capWindows": Capture.shared.overlay?.windows.map { "\($0.isVisible) key:\($0.isKeyWindow) lvl:\($0.level.rawValue) \(NSStringFromRect($0.frame))" } ?? [], "appActive": NSApp.isActive, "hotkeys": HotKeys.shared.statuses.map { "\($0.key)=\($0.value)" }, "barCPU": TaruBarModel.shared.cpu.last ?? -1, "barTemp": TaruBarModel.shared.temperature ?? -999, "wpCurrent": Wallpaper.shared.current, "dockFrame": NSStringFromRect(TaruDock.shared.panel.frame), "xdrOn": Brightness.shared.on, "xdrFactor": Brightness.shared.factor, "xdrNote": Brightness.shared.note, "awakeHolding": Awake.shared.holding, "awakeReason": Awake.shared.reason]
             if let d = try? JSONSerialization.data(withJSONObject: st, options: .prettyPrinted) { try? d.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-state.json")) }
         }
         dc.addObserver(forName: .init("com.taru.tweaks.notifytest"), object: nil, queue: .main) { _ in
@@ -174,7 +175,7 @@ final class Nav: ObservableObject { @Published var page = "general" }
 struct SettingsRoot: View {
     @EnvironmentObject var nav: Nav
     let groups = [
-        SidebarGroup(id: "Taru Tweaks", items: [SidebarItem(id: "general", title: "General", icon: "square.grid.2x2"), SidebarItem(id: "bar", title: "Taru Bar", icon: "menubar.arrow.up.rectangle"), SidebarItem(id: "menubar", title: "Menu Bar", icon: "menubar.rectangle"), SidebarItem(id: "theme", title: "Theme", icon: "paintpalette")]),
+        SidebarGroup(id: "Taru Tweaks", items: [SidebarItem(id: "general", title: "General", icon: "square.grid.2x2"), SidebarItem(id: "bar", title: "Taru Bar", icon: "menubar.arrow.up.rectangle"), SidebarItem(id: "menubar", title: "Menu Bar", icon: "menubar.rectangle"), SidebarItem(id: "theme", title: "Theme", icon: "paintpalette"), SidebarItem(id: "awake", title: "Stay Awake", icon: "cup.and.saucer")]),
         SidebarGroup(id: "Windows", items: [SidebarItem(id: "switcher.shortcuts", title: "Switcher", icon: "rectangle.on.rectangle"), SidebarItem(id: "switcher.appearance", title: "Look", icon: "square.grid.3x2"),
                                            SidebarItem(id: "switcher.controls", title: "Controls", icon: "keyboard"), SidebarItem(id: "switcher.exceptions", title: "Exceptions", icon: "nosign"),
                                            SidebarItem(id: "desktop", title: "Desktop", icon: "menubar.dock.rectangle"), SidebarItem(id: "dock", title: "Taru Dock", icon: "dock.rectangle")]),
@@ -195,6 +196,7 @@ struct SettingsRoot: View {
             case "dock": DockPresetsSettings()
             case "wallpaper": WallpaperSettings()
             case "capture": CaptureSettings()
+            case "awake": AwakeSettings()
             default: BrightnessSettings()
             }
         }
@@ -263,6 +265,7 @@ struct MainMenu: View {
             row("Window switcher", "⌘⇥ windows · ⌥⇥ apps", $switcher.enabled)
             row("Show Desktop", "\(modifierString(switcher.desktopMask))\(keyString(switcher.desktopKey))", $switcher.showDesktop)
             row("XDR Boost", "\(bright.nits) nits", $bright.on)
+            AwakeRow()
             HStack { Text("Task Manager").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.bone); Spacer(); Text("⌃⇧Esc").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash) }
             row("Battery limit", "\(battery.battery.percent)% · \(battery.status?.reason ?? "helper off")", Binding(get: { battery.config.enabled }, set: { v in battery.update { $0.enabled = v } }))
             HStack(spacing: 8) {
@@ -338,5 +341,19 @@ struct TaskManagerKey: View {
     var body: some View {
         KeyRecorder(mask: Binding(get: { mask }, set: { mask = $0; UserDefaults.standard.set($0, forKey: "tm.mask"); AppDelegate.shared.registerTaskManagerKey() }),
                     key: Binding(get: { key }, set: { key = $0; UserDefaults.standard.set($0, forKey: "tm.key"); AppDelegate.shared.registerTaskManagerKey() }))
+    }
+}
+
+struct AwakeRow: View {
+    @ObservedObject var awake = Awake.shared
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Stay awake for Claude").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.bone)
+                Text(awake.holding ? awake.reason : "idle").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash).lineLimit(1)
+            }
+            Spacer()
+            Toggle("", isOn: $awake.enabled).toggleStyle(.switch).labelsHidden().controlSize(.small)
+        }
     }
 }
