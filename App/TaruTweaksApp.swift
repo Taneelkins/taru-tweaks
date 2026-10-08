@@ -94,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func arm() {
         if AXIsProcessTrusted(), Input.shared.start() {
-            if SwitcherPrefs.shared.enabled { SkyLight.moveNativeSwitcherToOption() }
+            SwitcherPrefs.shared.syncNativeSwitcher()
             retry?.invalidate(); return
         }
         retry?.invalidate()

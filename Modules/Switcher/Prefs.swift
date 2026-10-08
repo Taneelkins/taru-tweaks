@@ -65,7 +65,7 @@ final class SwitcherPrefs: ObservableObject {
     static let shared = SwitcherPrefs()
     private let d = UserDefaults.standard
 
-    @Published var shortcuts: [Shortcut] { didSet { save("shortcuts", shortcuts) } }
+    @Published var shortcuts: [Shortcut] { didSet { save("shortcuts", shortcuts); syncNativeSwitcher() } }
     @Published var exceptions: [AppException] { didSet { save("exceptions", exceptions) } }
     @Published var style: Style { didSet { d.set(style.rawValue, forKey: "style") } }
     @Published var size: TileSize { didSet { d.set(size.rawValue, forKey: "size") } }
@@ -86,7 +86,11 @@ final class SwitcherPrefs: ObservableObject {
     @Published var desktopKey: Int64 { didSet { d.set(desktopKey, forKey: "desktopKey") } }
     @Published var dockForceQuit: Bool { didSet { d.set(dockForceQuit, forKey: "dockForceQuit") } }
     @Published var groupByApp: Bool { didSet { d.set(groupByApp, forKey: "groupByApp") } }
-    @Published var enabled: Bool { didSet { d.set(enabled, forKey: "switcherEnabled"); enabled ? SkyLight.moveNativeSwitcherToOption() : SkyLight.restoreNativeSwitcher() } }
+    @Published var enabled: Bool { didSet { d.set(enabled, forKey: "switcherEnabled"); syncNativeSwitcher() } }
+
+    var takesCommandTab: Bool { enabled && shortcuts.contains { $0.enabled && $0.key == 48 && $0.holdMask & ~UInt64(0x20000) == 0x100000 } }
+
+    func syncNativeSwitcher() { takesCommandTab ? SkyLight.moveNativeSwitcherToOption() : SkyLight.restoreNativeSwitcher() }
 
     init() {
         var sc: [Shortcut] = SwitcherPrefs.load("shortcuts") ?? Shortcut.defaults
