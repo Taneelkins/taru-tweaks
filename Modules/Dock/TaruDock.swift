@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 
 let FinderPath = "/System/Library/CoreServices/Finder.app"
-let DockLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
+let DockLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
 
 enum MacDock {
     static let domain = "com.apple.dock" as CFString
