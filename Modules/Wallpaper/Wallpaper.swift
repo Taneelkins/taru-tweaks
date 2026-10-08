@@ -10,6 +10,8 @@ final class Wallpaper: ObservableObject {
     @Published var fill = UserDefaults.standard.object(forKey: "wp.fill") as? Bool ?? true { didSet { UserDefaults.standard.set(fill, forKey: "wp.fill"); windows.values.forEach { $0.gravity(fill) } } }
     @Published var library: [URL] = []
     @Published var playing = false
+    @Published var systemActive = false
+    @Published var systemReady = false
 
     let dir: URL = {
         let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("TaruTweaks/Wallpapers")
@@ -38,7 +40,22 @@ final class Wallpaper: ObservableObject {
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in self?.layoutWindows() }
         ws.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in self?.layoutWindows() }
         Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.layoutWindows() }
+        checkSystem()
+        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.checkSystem() }
         apply()
+    }
+
+    func checkSystem() {
+        let ready = SystemWallpaper.ready
+        if ready && !systemReady { Task { await SystemWallpaper.sync(library) } }
+        if ready != systemReady { systemReady = ready }
+        let active = SystemWallpaper.isActive
+        if active != systemActive { systemActive = active; apply() }
+    }
+
+    func setUpLockScreen() {
+        SystemWallpaper.openSettings()
+        Task { await SystemWallpaper.sync(library) }
     }
 
     func reload() {
@@ -52,6 +69,7 @@ final class Wallpaper: ObservableObject {
         if !FileManager.default.fileExists(atPath: dest.path) { try? FileManager.default.copyItem(at: url, to: dest) }
         reload()
         choose(dest)
+        Task { await SystemWallpaper.sync(library) }
     }
 
     func remove(_ url: URL) {
@@ -68,7 +86,7 @@ final class Wallpaper: ObservableObject {
 
     private func apply() {
         guard started else { return }
-        guard enabled, FileManager.default.fileExists(atPath: current) else {
+        guard enabled, !systemActive, FileManager.default.fileExists(atPath: current) else {
             player.pause(); looper?.disableLooping(); looper = nil; player.removeAllItems()
             windows.values.forEach { $0.orderOut(nil) }
             windows = [:]
@@ -84,7 +102,7 @@ final class Wallpaper: ObservableObject {
     }
 
     private func layoutWindows() {
-        guard enabled, looper != nil else { return }
+        guard enabled, !systemActive, looper != nil else { return }
         var live: [CGDirectDisplayID: WallpaperWindow] = [:]
         for screen in NSScreen.screens {
             guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else { continue }
@@ -179,7 +197,11 @@ struct WallpaperSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             PageTitle(title: "Live Wallpaper", subtitle: "Plays your video wallpaper on every Space and display, 24/7, from inside Taru Tweaks. The lock screen and Mission Control show a still from the same video.")
-            SettingRow(title: "Live wallpaper", detail: wp.playing ? "Playing" : (wp.enabled ? "Paused, nothing on screen can see it" : "Off")) { Switch(on: $wp.enabled) }
+            SettingRow(title: "Lock screen + desktop", detail: wp.systemActive ? "On: macOS plays it everywhere, lock screen included" : "Pick \"Taru Tweaks — Live Wallpapers\" in System Settings → Wallpaper, then your video") {
+                if wp.systemActive { Text("ACTIVE").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(Theme.shared.accent) }
+                else { TweakButton(title: "Set up") { wp.setUpLockScreen() } }
+            }
+            SettingRow(title: "Desktop-only player", detail: wp.systemActive ? "Not needed while the lock screen version is active" : (wp.playing ? "Playing" : (wp.enabled ? "Paused, nothing on screen can see it" : "Off"))) { Switch(on: $wp.enabled) }
             SettingRow(title: "Pause when it can't be seen", detail: "Stops decoding while a window covers the whole desktop or the screen is locked. You'll never notice, and it saves battery.") { Switch(on: $wp.pauseHidden) }
             SettingRow(title: "Scaling") { Seg(options: [("Fill", true), ("Fit", false)], value: $wp.fill) }
             SectionLabel(text: "Videos")
@@ -227,5 +249,88 @@ struct WallpaperSettings: View {
         p.allowsMultipleSelection = false
         NSApp.activate(ignoringOtherApps: true)
         if p.runModal() == .OK, let url = p.url { wp.importVideo(url) }
+    }
+}
+
+enum SystemWallpaper {
+    static let extensionID = "com.taru.tweaks.wallpaper"
+    static var container: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Containers/\(extensionID)") }
+    static var videosDir: URL { container.appendingPathComponent("Data/Documents/videos") }
+    static var ready: Bool { FileManager.default.fileExists(atPath: container.path) }
+
+    struct Entry: Codable {
+        let id: String
+        var name: String
+        var filename: String
+        var duration: Double
+        var fps: Double
+        var resolution: CGSize
+        var dateAdded: Date
+    }
+
+    static var isActive: Bool {
+        let index = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/com.apple.wallpaper/Store/Index.plist")
+        guard let data = try? Data(contentsOf: index) else { return false }
+        return data.range(of: Data(extensionID.utf8)) != nil
+    }
+
+    static func existing() -> Set<String> {
+        let dirs = (try? FileManager.default.contentsOfDirectory(at: videosDir, includingPropertiesForKeys: nil)) ?? []
+        return Set(dirs.compactMap { d in
+            (try? Data(contentsOf: d.appendingPathComponent("metadata.json"))).flatMap { try? JSONDecoder().decode(Entry.self, from: $0) }?.filename
+        })
+    }
+
+    static func sync(_ videos: [URL]) async {
+        guard ready else { return }
+        let fm = FileManager.default
+        try? fm.createDirectory(at: videosDir, withIntermediateDirectories: true)
+        let have = existing()
+        var changed = false
+        for url in videos where !have.contains(url.lastPathComponent) {
+            let id = UUID().uuidString
+            let dir = videosDir.appendingPathComponent(id)
+            do {
+                try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+                let dest = dir.appendingPathComponent(url.lastPathComponent)
+                do { try fm.linkItem(at: url, to: dest) } catch { try fm.copyItem(at: url, to: dest) }
+                let asset = AVURLAsset(url: dest)
+                var fps = 0.0, size = CGSize.zero, duration = 0.0
+                if let track = try? await asset.loadTracks(withMediaType: .video).first {
+                    fps = Double((try? await track.load(.nominalFrameRate)) ?? 0)
+                    size = (try? await track.load(.naturalSize)) ?? .zero
+                }
+                if let d = try? await asset.load(.duration) { duration = CMTimeGetSeconds(d) }
+                let entry = Entry(id: id, name: url.deletingPathExtension().lastPathComponent, filename: url.lastPathComponent, duration: duration, fps: fps, resolution: size, dateAdded: Date())
+                try JSONEncoder().encode(entry).write(to: dir.appendingPathComponent("metadata.json"))
+                let gen = AVAssetImageGenerator(asset: asset)
+                gen.appliesPreferredTrackTransform = true
+                gen.maximumSize = CGSize(width: 960, height: 540)
+                if let cg = try? await gen.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image,
+                   let jpg = NSBitmapImageRep(cgImage: cg).representation(using: .jpeg, properties: [.compressionFactor: 0.85]) {
+                    try? jpg.write(to: dir.appendingPathComponent("thumbnail.jpg"))
+                }
+                changed = true
+            } catch {
+                try? fm.removeItem(at: dir)
+            }
+        }
+        if changed { notify() }
+    }
+
+    static func notify() {
+        var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
+        let length = confstr(_CS_DARWIN_USER_CACHE_DIR, &buf, buf.count)
+        if length > 0 {
+            let cacheDir = URL(fileURLWithPath: String(cString: buf)).appendingPathComponent("com.apple.wallpaper.agent/com.apple.wallpaper.view-model-cache")
+            for surface in ["desktop", "screenSaver"] {
+                try? FileManager.default.removeItem(at: cacheDir.appendingPathComponent("extension-\(extensionID)-\(surface)"))
+            }
+        }
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFNotificationName("\(extensionID).libraryChanged" as CFString), nil, nil, true)
+    }
+
+    static func openSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension")!)
     }
 }

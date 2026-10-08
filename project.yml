@@ -45,6 +45,8 @@ targets:
         embed: true
         copy:
           destination: executables
+      - target: TaruWallpaper
+        embed: true
     info:
       path: Resources/Info.plist
       properties:
@@ -61,6 +63,37 @@ targets:
         PRODUCT_NAME: "Taru Tweaks"
         GENERATE_INFOPLIST_FILE: NO
         LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+  TaruWallpaper:
+    type: extensionkit-extension
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: WallpaperExtension
+        excludes: ["LICENSE-Phosphene", "Info.plist", "Wallpaper.entitlements"]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.taru.tweaks.wallpaper
+        PRODUCT_NAME: TaruWallpaper
+        MACOSX_DEPLOYMENT_TARGET: "26.0"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: WallpaperExtension/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Taru Tweaks Wallpaper
+        CODE_SIGN_ENTITLEMENTS: WallpaperExtension/Wallpaper.entitlements
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        SKIP_INSTALL: YES
+        SWIFT_OBJC_BRIDGING_HEADER: WallpaperExtension/WallpaperExtension-Bridging-Header.h
+        SWIFT_VERSION: "6.0"
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY: YES
+        SWIFT_UPCOMING_FEATURE_INFER_ISOLATED_CONFORMANCES: YES
+        SWIFT_UPCOMING_FEATURE_INTERNAL_IMPORTS_BY_DEFAULT: YES
+        SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
+        SWIFT_UPCOMING_FEATURE_NONISOLATED_NONSENDING_BY_DEFAULT: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0.0"
   TaskManager:
     type: application
     platform: macOS
