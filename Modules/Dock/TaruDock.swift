@@ -75,6 +75,12 @@ final class TaruDock {
         model.$enabled.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] on in on ? self?.enable() : self?.disable() }.store(in: &bag)
         model.objectWillChange.receive(on: RunLoop.main).sink { [weak self] in self?.view.setNeedsRebuild() }.store(in: &bag)
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in self?.place(animated: false) }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.shown, self.model.autohide, self.holds == 0 else { return }
+            self.diag("space changed while shown, resetting")
+            self.shown = false
+            self.panel.orderOut(nil)
+        }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { _ in MacDock.restore() }
     }
 
@@ -127,13 +133,32 @@ final class TaruDock {
         return NSRect(x: (f.midX - size.width / 2).rounded(), y: shown ? f.minY + 6 : f.minY - size.height - 4, width: size.width, height: size.height)
     }
 
+    private var lastDiag = ""
+    func diag(_ text: String) {
+        guard text != lastDiag else { return }
+        lastDiag = text
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
+        let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
+        let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TaruTweaks/dock.log")
+        try? "\(f.string(from: Date())) [\(front)] \(text)\n".appendLine(to: url)
+    }
+
     func pointerMoved() {
         guard model.enabled else { return }
         let p = NSEvent.mouseLocation
         if !model.autohide { if !shown { show() }; return }
+        if shown && !(panel.isVisible && panel.isOnActiveSpace) {
+            diag("shown but not visible (visible=\(panel.isVisible) activeSpace=\(panel.isOnActiveSpace)), resetting")
+            shown = false
+            panel.orderOut(nil)
+        }
         if !shown {
             let f = targetFrame(shown: true)
-            if p.y <= screen.frame.minY + 1.5 && p.x >= f.minX - 160 && p.x <= f.maxX + 160 { show() }
+            let fullscreen = screen.frame.maxY - screen.visibleFrame.maxY < 1
+            if p.y <= screen.frame.minY + 1.5 {
+                if fullscreen || (p.x >= f.minX - 160 && p.x <= f.maxX + 160) { diag("edge hit x=\(Int(p.x)) fullscreen=\(fullscreen) → show"); show() }
+                else { diag("edge hit x=\(Int(p.x)) outside zone \(Int(f.minX - 160))...\(Int(f.maxX + 160))") }
+            }
             return
         }
         if holds > 0 || panel.frame.insetBy(dx: -30, dy: -30).contains(p) {
