@@ -282,6 +282,9 @@ final class WindowEngine {
     }
 
     func toggleShowDesktop() {
+        let windows = all(); let stillDown = desktopStash.filter { s in windows.first(where: { $0.id == s.1 })?.minimized ?? true }
+        desktopLog("toggle stash=\(desktopStash.count) stillMinimized=\(stillDown.count)")
+        if stillDown.isEmpty { desktopStash = [] }
         if !desktopStash.isEmpty {
             for (pid, id) in desktopStash.reversed() {
                 if let el = axWindows(pid).first(where: { var w: CGWindowID = 0; _ = _AXUIElementGetWindow($0, &w); return w == id }) {
@@ -297,7 +300,18 @@ final class WindowEngine {
         let ordered = wins.sorted { (rank[$0.id] ?? Int.max) < (rank[$1.id] ?? Int.max) }
         desktopStash = ordered.map { ($0.pid, $0.id) }
         Thumbnails.shared.capture(ordered.map(\.id))
-        for w in ordered { if let el = axWindow(w) { AXUIElementSetAttributeValue(el, kAXMinimizedAttribute as CFString, kCFBooleanTrue) } }
+        var done = 0
+        for w in ordered { if let el = axWindow(w), AXUIElementSetAttributeValue(el, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success { done += 1 } }
+        desktopLog("minimize candidates=\(ordered.count) minimized=\(done)")
+    }
+
+    func noteDesktopKey(flags: UInt64, want: UInt64, on: Bool, front: String) { desktopLog("key flags=0x\(String(flags, radix: 16)) want=0x\(String(want, radix: 16)) on=\(on) front=\(front)") }
+
+    private func desktopLog(_ s: String) {
+        let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TaruTweaks/desktop.log")
+        let line = "\(Date()) \(s)\n"
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+        else { try? line.write(to: url, atomically: true, encoding: .utf8) }
     }
 }
 

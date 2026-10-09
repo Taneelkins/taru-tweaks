@@ -79,6 +79,7 @@ final class Input {
 
         if !s.visible {
             guard down else { return false }
+            if key == prefs.desktopKey && flags & 0x100000 != 0 { DispatchQueue.main.async { WindowEngine.shared.noteDesktopKey(flags: flags, want: prefs.desktopMask, on: prefs.showDesktop, front: NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?") } }
             if prefs.showDesktop && key == prefs.desktopKey && flags == prefs.desktopMask && !frontIgnored() {
                 DispatchQueue.main.async { WindowEngine.shared.toggleShowDesktop() }
                 return true
