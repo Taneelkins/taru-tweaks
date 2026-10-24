@@ -20,6 +20,12 @@ final class TMDelegate: NSObject, NSApplicationDelegate {
             w.contentView = NSHostingView(rootView: TaskManagerView())
             w.setFrameAutosaveName("TaskManagerWindow")
             if w.frame.origin == .zero { w.center() }
+            // stop sampling while the window is minimized, on another Space or buried, it was burning ~2.5% CPU for nobody
+            NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: w, queue: .main) { [weak w] _ in
+                guard let w else { return }
+                if w.isVisible && w.occlusionState.contains(.visible) { ProcessStore.shared.start(); PerfStore.shared.start() }
+                else { ProcessStore.shared.stop(); PerfStore.shared.stop() }
+            }
             window = w
         }
         NSApp.activate(ignoringOtherApps: true)

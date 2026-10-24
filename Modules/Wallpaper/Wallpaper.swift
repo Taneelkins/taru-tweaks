@@ -6,7 +6,7 @@ final class Wallpaper: ObservableObject {
     static let shared = Wallpaper()
     @Published var enabled = UserDefaults.standard.object(forKey: "wp.enabled") as? Bool ?? true { didSet { UserDefaults.standard.set(enabled, forKey: "wp.enabled"); apply() } }
     @Published var current = UserDefaults.standard.string(forKey: "wp.current") ?? "" { didSet { UserDefaults.standard.set(current, forKey: "wp.current") } }
-    @Published var pauseHidden = UserDefaults.standard.object(forKey: "wp.pauseHidden") as? Bool ?? true { didSet { UserDefaults.standard.set(pauseHidden, forKey: "wp.pauseHidden"); updatePlayback() } }
+    @Published var pauseHidden = UserDefaults.standard.object(forKey: "wp.pauseHidden") as? Bool ?? true { didSet { UserDefaults.standard.set(pauseHidden, forKey: "wp.pauseHidden"); updatePlayback(); Coverage.shared.refresh() } }
     @Published var fill = UserDefaults.standard.object(forKey: "wp.fill") as? Bool ?? true { didSet { UserDefaults.standard.set(fill, forKey: "wp.fill"); windows.values.forEach { $0.gravity(fill) } } }
     @Published var library: [URL] = []
     @Published var playing = false
@@ -42,6 +42,7 @@ final class Wallpaper: ObservableObject {
         Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in self?.layoutWindows() }
         checkSystem()
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.checkSystem() }
+        Coverage.shared.start()
         apply()
     }
 
@@ -202,7 +203,7 @@ struct WallpaperSettings: View {
                 else { TweakButton(title: "Set up") { wp.setUpLockScreen() } }
             }
             SettingRow(title: "Desktop-only player", detail: wp.systemActive ? "Not needed while the lock screen version is active" : (wp.playing ? "Playing" : (wp.enabled ? "Paused, nothing on screen can see it" : "Off"))) { Switch(on: $wp.enabled) }
-            SettingRow(title: "Pause when it can't be seen", detail: "Stops decoding while a window covers the whole desktop or the screen is locked. You'll never notice, and it saves battery.") { Switch(on: $wp.pauseHidden) }
+            SettingRow(title: "Pause when it can't be seen", detail: "Freezes on the current frame while windows cover most of the desktop or a full-screen app is up, and plays again when you're back on the desktop. Saves battery.") { Switch(on: $wp.pauseHidden) }
             SettingRow(title: "Scaling") { Seg(options: [("Fill", true), ("Fit", false)], value: $wp.fill) }
             SectionLabel(text: "Videos")
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12) {

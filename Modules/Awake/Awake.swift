@@ -1,4 +1,5 @@
 import AppKit
+import IOKit.ps
 import IOKit.pwr_mgt
 import SwiftUI
 
@@ -14,6 +15,7 @@ final class Awake: ObservableObject {
     @Published private(set) var reason = ""
 
     private var assertion: IOPMAssertionID = 0
+    private var heldDisplay = false
     private var timer: Timer?
     private let projects = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
 
@@ -78,9 +80,18 @@ final class Awake: ObservableObject {
 
     private func hold(_ why: String) {
         reason = why
+        // the lit screen is the expensive part, so on battery only the Mac stays up and the screen sleeps as usual
+        let display = keepDisplay && !Self.onBattery
+        if holding, display != heldDisplay { IOPMAssertionRelease(assertion); holding = false }
         guard !holding else { return }
-        let type = (keepDisplay ? kIOPMAssertionTypePreventUserIdleDisplaySleep : kIOPMAssertionTypePreventUserIdleSystemSleep) as CFString
+        let type = (display ? kIOPMAssertionTypePreventUserIdleDisplaySleep : kIOPMAssertionTypePreventUserIdleSystemSleep) as CFString
         holding = IOPMAssertionCreateWithName(type, IOPMAssertionLevel(kIOPMAssertionLevelOn), "Taru Tweaks: \(why)" as CFString, &assertion) == kIOReturnSuccess
+        heldDisplay = display
+    }
+
+    static var onBattery: Bool {
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(), let type = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() else { return false }
+        return (type as String) == kIOPSBatteryPowerValue
     }
 
     private func release() {
@@ -101,7 +112,7 @@ struct AwakeSettings: View {
                 Text(awake.holding ? "AWAKE" : "IDLE").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(awake.holding ? theme.accent : Palette.ash)
             }
             SettingRow(title: "Stay awake while Claude works", detail: "Watches Claude Code sessions, including long commands") { Switch(on: $awake.enabled) }
-            SettingRow(title: "Keep the screen on", detail: awake.keepDisplay ? "Screen stays lit so you can watch it" : "Screen can turn off, the Mac keeps running") { Switch(on: $awake.keepDisplay) }
+            SettingRow(title: "Keep the screen on", detail: awake.keepDisplay ? "Screen stays lit while plugged in. On battery it turns off as usual, the Mac keeps running" : "Screen can turn off, the Mac keeps running") { Switch(on: $awake.keepDisplay) }
             SettingRow(title: "Quiet time before sleeping", detail: "How long after Claude's last activity to let go") {
                 Seg(options: [("2 min", 2.0), ("5 min", 5.0), ("15 min", 15.0), ("30 min", 30.0)], value: $awake.grace)
             }

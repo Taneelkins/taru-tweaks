@@ -14,7 +14,7 @@ final class Responsiveness {
     }
 
     private func probe() {
-        guard AXIsProcessTrusted() else { return }
+        guard AXIsProcessTrusted(), Self.taskManagerOnScreen() else { return }
         let me = ProcessInfo.processInfo.processIdentifier
         let pids = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && $0.processIdentifier != me && $0.isFinishedLaunching }.map(\.processIdentifier)
         queue.async { [self] in
@@ -32,6 +32,15 @@ final class Responsiveness {
             let obj: [String: Any] = ["updated": Date().timeIntervalSince1970, "hung": hung.map { Int($0) }]
             if let d = try? JSONSerialization.data(withJSONObject: obj) { try? d.write(to: Self.file, options: .atomic) }
         }
+    }
+
+    // only Task Manager shows "Not responding", and pinging every app every 2s wakes all of them up,
+    // so the probe only runs while its window is actually on screen
+    private static func taskManagerOnScreen() -> Bool {
+        guard let tm = NSRunningApplication.runningApplications(withBundleIdentifier: "com.taru.taskmanager").first, !tm.isHidden,
+              let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]]
+        else { return false }
+        return list.contains { ($0[kCGWindowOwnerPID] as? pid_t) == tm.processIdentifier && ($0[kCGWindowLayer] as? Int) == 0 }
     }
 }
 
