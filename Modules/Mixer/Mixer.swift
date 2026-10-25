@@ -28,7 +28,9 @@ final class Mixer: ObservableObject {
     private var started = false
 
     func start() {
-        guard !started else { return }
+        // off until the popup and level issues are sorted: it opened and shut instantly (flashing in full screen)
+        // and tapped audio came out quieter than the original
+        guard !started, UserDefaults.standard.bool(forKey: "mixer.enabled") else { return }
         started = true
         // a brand-new item lands at the far left, inside the section the Menu Bar ‹ hides; start it next to the flame
         let ud = UserDefaults.standard
@@ -37,8 +39,8 @@ final class Mixer: ObservableObject {
         s.set(symbol: "slider.vertical.3")
         s.onHide = { [weak self] in self?.menuIcon = false }
         // the playing dots only matter while you're looking, so the list only refreshes while the popup is open
-        s.onShow = { [weak self] in self?.watch(true) }
-        s.onClose = { [weak self] in self?.watch(false) }
+        s.onShow = { [weak self] in self?.log("show"); self?.watch(true) }
+        s.onClose = { [weak self] in self?.log("close"); self?.watch(false) }
         s.item.isVisible = menuIcon
         item = s
         // the HAL tells us when apps start/stop having audio objects or the output switches; no polling
@@ -49,6 +51,14 @@ final class Mixer: ObservableObject {
             }
         }
         refresh()
+    }
+
+    // ~/Library/Caches/TaruTweaks/mixer.log
+    func log(_ s: String) {
+        let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TaruTweaks/mixer.log")
+        let line = "\(Date()) \(s)\n"
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+        else { try? line.write(to: url, atomically: true, encoding: .utf8) }
     }
 
     private var watcher: Timer?
@@ -98,6 +108,7 @@ final class Mixer: ObservableObject {
 
     func refresh() {
         apps = Self.scan()
+        if watcher != nil { log("refresh \(apps.count) apps: \(apps.prefix(6).map(\.name).joined(separator: ", "))") }
         for a in apps { apply(a.id) }
         // apps that went away take their tap with them
         for id in engines.keys where !apps.contains(where: { $0.id == id }) { engines.removeValue(forKey: id)?.stop() }
