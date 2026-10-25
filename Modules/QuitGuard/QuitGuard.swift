@@ -6,6 +6,8 @@ import SwiftUI
 final class QuitGuard: ObservableObject {
     static let shared = QuitGuard()
     private static let qKey: Int64 = 12, escKey: Int64 = 53, cmd: UInt64 = 0x100000
+    // tags the ⌘Q we send ourselves once the hold completes, so the tap lets it through
+    static let marker: Int64 = 0x5441_5255
 
     @Published var enabled = UserDefaults.standard.object(forKey: "quit.enabled") as? Bool ?? true { didSet { UserDefaults.standard.set(enabled, forKey: "quit.enabled"); if !enabled { cancel() } } }
     @Published var hold = UserDefaults.standard.object(forKey: "quit.hold") as? Double ?? 0.7 { didSet { UserDefaults.standard.set(hold, forKey: "quit.hold") } }
@@ -19,7 +21,8 @@ final class QuitGuard: ObservableObject {
     var pending: Bool { target != nil }
 
     // called from Input's tap on the main thread for every key, so plain typing bails on the first line. true = eat it
-    func key(_ key: Int64, down: Bool, repeating: Bool, flags: UInt64, ignored: @autoclosure () -> Bool) -> Bool {
+    func key(_ key: Int64, down: Bool, repeating: Bool, flags: UInt64, synthetic: Bool, ignored: @autoclosure () -> Bool) -> Bool {
+        if synthetic { return false }
         if key == Self.escKey, down, pending { cancel(); return true }
         guard key == Self.qKey else { return false }
         if !down {
@@ -44,6 +47,7 @@ final class QuitGuard: ObservableObject {
 
     private func begin(_ app: NSRunningApplication) {
         target = app
+        log("holding \(app.localizedName ?? "?")")
         hud.show(app: app.localizedName ?? "app", icon: app.icon, duration: hold)
         timer = Timer.scheduledTimer(withTimeInterval: hold, repeats: false) { [weak self] _ in self?.fire() }
     }
@@ -51,16 +55,35 @@ final class QuitGuard: ObservableObject {
     private func fire() {
         guard let app = target else { return }
         timer = nil; target = nil; swallowUp = true
-        // a real quit request, so the app still gets to ask about unsaved changes
-        app.terminate()
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { log("dropped, \(app.localizedName ?? "?") lost focus"); hud.hide(); return }
+        // replay the real ⌘Q instead of terminate(): an app with a sheet or open panel up ignores
+        // quit requests (TextEdit's launch panel answers "user canceled") but handles the key fine
+        for down in [true, false] {
+            let e = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(Self.qKey), keyDown: down)
+            e?.flags = .maskCommand
+            e?.setIntegerValueField(.eventSourceUserData, value: Self.marker)
+            e?.post(tap: .cghidEventTap)
+        }
+        log("quit \(app.localizedName ?? "?")")
         hud.done()
     }
 
     func cancel() {
         timer?.invalidate(); timer = nil
         guard target != nil else { return }
+        log("cancelled \(target?.localizedName ?? "?")")
         target = nil
         hud.hide()
+    }
+}
+
+extension QuitGuard {
+    // ~/Library/Caches/TaruTweaks/quit.log
+    func log(_ s: String) {
+        let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TaruTweaks/quit.log")
+        let line = "\(Date()) \(s)\n"
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+        else { try? line.write(to: url, atomically: true, encoding: .utf8) }
     }
 }
 

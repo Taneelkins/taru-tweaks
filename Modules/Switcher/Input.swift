@@ -79,7 +79,7 @@ final class Input {
         let down = type == .keyDown
 
         if !s.visible {
-            if QuitGuard.shared.key(key, down: down, repeating: e.getIntegerValueField(.keyboardEventAutorepeat) != 0, flags: flags, ignored: frontIgnored()) { return true }
+            if QuitGuard.shared.key(key, down: down, repeating: e.getIntegerValueField(.keyboardEventAutorepeat) != 0, flags: flags, synthetic: e.getIntegerValueField(.eventSourceUserData) == QuitGuard.marker, ignored: frontIgnored()) { return true }
             guard down else { return false }
             if key == prefs.desktopKey && flags & 0x100000 != 0 { DispatchQueue.main.async { WindowEngine.shared.noteDesktopKey(flags: flags, want: prefs.desktopMask, on: prefs.showDesktop, front: NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?") } }
             if prefs.showDesktop && key == prefs.desktopKey && flags == prefs.desktopMask && !frontIgnored() {
