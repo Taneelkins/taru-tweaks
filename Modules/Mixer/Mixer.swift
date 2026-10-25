@@ -61,9 +61,10 @@ final class Mixer: ObservableObject {
     func start() {
         guard enabled, !started else { return }
         started = true
-        // a brand-new item lands at the far left, inside the section the Menu Bar ‹ hides; start it next to the flame
+        // a brand-new item lands at the far left, inside the section the Menu Bar ‹ hides; start it just left of the
+        // battery, where the Taru Bar readouts (which draw over the icons right of it) can't cover it
         let ud = UserDefaults.standard
-        if ud.object(forKey: "NSStatusItem Preferred Position Item-3") == nil { ud.set(6100.0, forKey: "NSStatusItem Preferred Position Item-3") }
+        if ud.object(forKey: "NSStatusItem Preferred Position Item-3") == nil { ud.set(6140.0, forKey: "NSStatusItem Preferred Position Item-3") }
         if item == nil {
             let s = TaruStatusItem(name: "Volume Mixer", autosave: "Item-3", page: "mixer", content: AnyView(MixerMenu()))
             s.set(symbol: "slider.vertical.3")
