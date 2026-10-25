@@ -7,6 +7,8 @@ final class TaruStatusItem: NSObject {
     let name: String
     let page: String
     var onHide: (() -> Void)?
+    var onShow: (() -> Void)?
+    var onClose: (() -> Void)?
     private let popover = NSPopover()
     private var outside: Any?
 
@@ -17,6 +19,8 @@ final class TaruStatusItem: NSObject {
         self.page = page
         super.init()
         popover.behavior = .transient
+        // fires however the popover closes, click outside included
+        NotificationCenter.default.addObserver(forName: NSPopover.didCloseNotification, object: popover, queue: .main) { [weak self] _ in self?.onClose?() }
         popover.animates = false
         popover.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: AnyView(content.fixedSize()))
@@ -53,6 +57,7 @@ final class TaruStatusItem: NSObject {
         guard let b = item.button else { return }
         NSApp.activate(ignoringOtherApps: true)
         if let v = popover.contentViewController?.view { v.layoutSubtreeIfNeeded(); popover.contentSize = v.fittingSize }
+        onShow?()
         popover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         outside = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.close() }

@@ -33,6 +33,9 @@ final class Mixer: ObservableObject {
         let s = TaruStatusItem(name: "Volume Mixer", autosave: "Item-3", page: "mixer", content: AnyView(MixerMenu()))
         s.set(symbol: "slider.vertical.3")
         s.onHide = { [weak self] in self?.menuIcon = false }
+        // the playing dots only matter while you're looking, so the list only refreshes while the popup is open
+        s.onShow = { [weak self] in self?.watch(true) }
+        s.onClose = { [weak self] in self?.watch(false) }
         s.item.isVisible = menuIcon
         item = s
         // the HAL tells us when apps start/stop having audio objects or the output switches; no polling
@@ -43,6 +46,14 @@ final class Mixer: ObservableObject {
             }
         }
         refresh()
+    }
+
+    private var watcher: Timer?
+    private func watch(_ on: Bool) {
+        watcher?.invalidate(); watcher = nil
+        guard on else { return }
+        refresh()
+        watcher = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.refresh() }
     }
 
     func volume(_ id: String) -> Float { volumes[id] ?? 1 }
@@ -254,8 +265,6 @@ final class TapEngine {
 struct MixerMenu: View {
     @ObservedObject var mixer = Mixer.shared
     @ObservedObject var theme = Theme.shared
-    @State private var tick = 0
-    private let timer = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -275,9 +284,7 @@ struct MixerMenu: View {
         .padding(14)
         .frame(width: 300, alignment: .leading)
         .background(Color.black.opacity(0.96))
-        .onAppear { mixer.refresh() }
-        // the playing dots only matter while you're looking
-        .onReceive(timer) { _ in mixer.refresh() }
+
     }
 }
 
