@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// Clipboard history. Text, images and copied files, pinned items on top, ⌃⌘V opens the picker and
+// Clipboard history. Text, images and copied files, pinned items on top, ⌘⇧C opens the picker and
 // Return pastes straight into the app you were in. Password managers mark secrets as concealed and
 // those never get saved. Idea from Vorssaint's Clipboard history.
 struct ClipItem: Codable, Identifiable, Equatable {
@@ -33,8 +33,8 @@ final class Clipboard: ObservableObject {
 
     @Published var enabled = UserDefaults.standard.object(forKey: "clip.enabled") as? Bool ?? true { didSet { UserDefaults.standard.set(enabled, forKey: "clip.enabled"); sync(); registerKey() } }
     @Published var keep = UserDefaults.standard.object(forKey: "clip.keep") as? Int ?? 300 { didSet { UserDefaults.standard.set(keep, forKey: "clip.keep"); trim(); save() } }
-    @Published var mask = (UserDefaults.standard.object(forKey: "clip.mask") as? NSNumber)?.uint64Value ?? 0x140000 { didSet { UserDefaults.standard.set(mask, forKey: "clip.mask"); registerKey() } }
-    @Published var key = (UserDefaults.standard.object(forKey: "clip.key") as? NSNumber)?.int64Value ?? 9 { didSet { UserDefaults.standard.set(key, forKey: "clip.key"); registerKey() } }
+    @Published var mask = (UserDefaults.standard.object(forKey: "clip.mask") as? NSNumber)?.uint64Value ?? 0x120000 { didSet { UserDefaults.standard.set(mask, forKey: "clip.mask"); registerKey() } }
+    @Published var key = (UserDefaults.standard.object(forKey: "clip.key") as? NSNumber)?.int64Value ?? 8 { didSet { UserDefaults.standard.set(key, forKey: "clip.key"); registerKey() } }
     @Published private(set) var items: [ClipItem] = []
 
     let dir: URL = {
