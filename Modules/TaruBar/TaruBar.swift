@@ -9,6 +9,7 @@ final class TaruBarModel: ObservableObject {
     @Published var showRAM: Bool { didSet { d.set(showRAM, forKey: "bar.ram"); changed() } }
     @Published var showMusic: Bool { didSet { d.set(showMusic, forKey: "bar.music"); changed() } }
     @Published var showWeather: Bool { didSet { d.set(showWeather, forKey: "bar.weather"); if showWeather { TaruBar.shared.fetchWeather() }; changed() } }
+    @Published var showClaude: Bool { didSet { d.set(showClaude, forKey: "bar.claude"); TaruBar.shared.syncClaude(); changed() } }
     @Published var tightSpacing: Bool { didSet { d.set(tightSpacing, forKey: "bar.tight"); TaruBar.shared.applySpacing() } }
     @Published var overlay: Bool { didSet { d.set(overlay, forKey: "bar.overlay"); changed(); TaruBar.shared.updateButton() } }
     @Published var city: String { didSet { d.set(city, forKey: "bar.city") } }
@@ -31,6 +32,7 @@ final class TaruBarModel: ObservableObject {
         showRAM = d.object(forKey: "bar.ram") as? Bool ?? (d.object(forKey: "bar.stats") as? Bool ?? true)
         showMusic = d.object(forKey: "bar.music") as? Bool ?? true
         showWeather = d.object(forKey: "bar.weather") as? Bool ?? true
+        showClaude = d.object(forKey: "bar.claude") as? Bool ?? true
         tightSpacing = d.object(forKey: "bar.tight") as? Bool ?? true
         overlay = d.object(forKey: "bar.overlay") as? Bool ?? false
         city = d.string(forKey: "bar.city") ?? "Toledo, Ohio"
@@ -42,11 +44,11 @@ final class TaruBarModel: ObservableObject {
     private func changed() { DispatchQueue.main.async { TaruBar.shared.place() } }
 
     func minimal() {
-        showCPU = false; showRAM = false; showMusic = false; showWeather = false
+        showCPU = false; showRAM = false; showMusic = false; showWeather = false; showClaude = false
     }
 
     func everything() {
-        showCPU = true; showRAM = true; showMusic = true; showWeather = true
+        showCPU = true; showRAM = true; showMusic = true; showWeather = true; showClaude = true
     }
 
     var weatherText: String {
@@ -103,6 +105,7 @@ final class TaruBar {
         }
         timers.forEach { $0.invalidate() }
         timers = []
+        syncClaude()
         guard model.enabled else {
             panel?.orderOut(nil)
             if let b = button { NSStatusBar.system.removeStatusItem(b); button = nil }
@@ -137,6 +140,11 @@ final class TaruBar {
         place()
     }
 
+    // only spawns Claude Code checks while the readout is actually on
+    func syncClaude() {
+        if model.enabled && model.showClaude { ClaudeLimits.shared.start() } else { ClaudeLimits.shared.stop() }
+    }
+
     func updateButton() {
         guard let b = button?.button else { return }
         let img = NSImage(systemSymbolName: model.overlay ? "chart.bar.fill" : "chart.bar", accessibilityDescription: "Taru Bar")
@@ -160,7 +168,7 @@ final class TaruBar {
         header.isEnabled = false
         m.addItem(header)
         m.addItem(.separator())
-        for (title, key) in [("CPU", \TaruBarModel.showCPU), ("Memory", \.showRAM), ("Now playing", \.showMusic), ("Weather", \.showWeather)] as [(String, ReferenceWritableKeyPath<TaruBarModel, Bool>)] {
+        for (title, key) in [("CPU", \TaruBarModel.showCPU), ("Memory", \.showRAM), ("Now playing", \.showMusic), ("Weather", \.showWeather), ("Claude limits", \.showClaude)] as [(String, ReferenceWritableKeyPath<TaruBarModel, Bool>)] {
             let it = ClosureItem(title) { [weak self] in guard let self else { return }; self.model[keyPath: key].toggle() }
             it.state = model[keyPath: key] ? .on : .off
             m.addItem(it)
@@ -279,7 +287,7 @@ final class TaruBar {
 
     func place() {
         guard model.enabled, let panel, let host else { return }
-        let anything = model.showCPU || model.showRAM || (model.showMusic && !model.track.isEmpty) || (model.showWeather && !model.weatherText.isEmpty)
+        let anything = model.showCPU || model.showRAM || (model.showMusic && !model.track.isEmpty) || (model.showWeather && !model.weatherText.isEmpty) || (model.showClaude && ClaudeLimits.shared.session != nil)
         guard anything else { panel.orderOut(nil); return }
         let f = screen.frame
         let barHeight = max(f.maxY - screen.visibleFrame.maxY, screen.auxiliaryTopRightArea?.height ?? 0, 24)
@@ -412,6 +420,7 @@ final class TaruBarPanel: NSPanel {
 struct TaruBarView: View {
     @ObservedObject var model: TaruBarModel
     @ObservedObject var theme = Theme.shared
+    @ObservedObject var claude = ClaudeLimits.shared
 
     var body: some View {
         HStack(spacing: 0) {
@@ -436,6 +445,9 @@ struct TaruBarView: View {
             }
             if model.showWeather && !model.weatherText.isEmpty {
                 segment { Text(model.weatherText) } action: { TaruBar.shared.showPopup(WeatherPopup(model: model)) }
+            }
+            if model.showClaude && claude.session != nil {
+                segment { ClaudeReadout() } action: { TaruBar.shared.showPopup(ClaudePopup()) }
             }
         }
         .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
@@ -496,6 +508,7 @@ struct TaruBarSettings: View {
             SettingRow(title: "Memory") { Switch(on: $model.showRAM) }
             SettingRow(title: "Now playing", detail: "Spotify and Music. Click to play or pause.") { Switch(on: $model.showMusic) }
             SettingRow(title: "Weather", detail: model.city) { Switch(on: $model.showWeather) }
+            SettingRow(title: "Claude limits", detail: "Session and weekly plan usage, straight from Claude Code. Turns red past 80%. Checks every 10 min while Claude works, every 30 when it's quiet.") { Switch(on: $model.showClaude) }
             SectionLabel(text: "Weather")
             SettingRow(title: "City") {
                 HStack(spacing: 8) {
