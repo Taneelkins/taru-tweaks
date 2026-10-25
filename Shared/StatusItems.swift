@@ -2,15 +2,17 @@ import AppKit
 import Combine
 import SwiftUI
 
-final class TaruStatusItem: NSObject {
+final class TaruStatusItem: NSObject, NSPopoverDelegate {
     let item: NSStatusItem
     let name: String
     let page: String
     var onHide: (() -> Void)?
     var onShow: (() -> Void)?
     var onClose: (() -> Void)?
+    var onLog: ((String) -> Void)?
     private let popover = NSPopover()
-    private var outside: Any?
+    private var monitors: [Any] = []
+    private var source: NSRunningApplication?
 
     init(name: String, autosave: String, page: String, content: AnyView) {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -18,7 +20,10 @@ final class TaruStatusItem: NSObject {
         self.name = name
         self.page = page
         super.init()
-        popover.behavior = .transient
+        // closes only when we say so: .transient shut it the moment activation or a Space change landed,
+        // which read as open-then-close (and a flash in full-screen apps)
+        popover.behavior = .applicationDefined
+        popover.delegate = self
         // fires however the popover closes, click outside included
         NotificationCenter.default.addObserver(forName: NSPopover.didCloseNotification, object: popover, queue: .main) { [weak self] _ in self?.onClose?() }
         popover.animates = false
@@ -52,21 +57,59 @@ final class TaruStatusItem: NSObject {
         toggle()
     }
 
-    func toggle() {
-        if popover.isShown { close(); return }
-        guard let b = item.button else { return }
-        NSApp.activate(ignoringOtherApps: true)
-        if let v = popover.contentViewController?.view { v.layoutSubtreeIfNeeded(); popover.contentSize = v.fittingSize }
-        onShow?()
-        popover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
-        outside = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.close() }
+    var isShown: Bool { popover.isShown }
+
+    // content that grows or shrinks while open (a list) asks for a new size
+    func fit() {
+        guard popover.isShown, let v = popover.contentViewController?.view else { return }
+        v.layoutSubtreeIfNeeded()
+        if popover.contentSize != v.fittingSize { popover.contentSize = v.fittingSize }
     }
 
-    func close() {
+    func toggle() {
+        if popover.isShown { close(handBack: true); return }
+        guard let b = item.button else { return }
+        if let v = popover.contentViewController?.view { v.layoutSubtreeIfNeeded(); popover.contentSize = v.fittingSize }
+        let front = NSWorkspace.shared.frontmostApplication
+        source = front?.processIdentifier == getpid() ? nil : front
+        onShow?()
+        popover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY)
+        guard popover.isShown, let w = popover.contentViewController?.view.window else { return }
+        // stay on the Space you're looking at (full-screen apps included) instead of dragging you to ours
+        w.collectionBehavior.insert([.fullScreenAuxiliary, .canJoinAllSpaces])
+        (w as? NSPanel)?.hidesOnDeactivate = false
+        w.makeKey()
+        // activate only after the popup is key on this Space, so activation has nowhere else to go
+        NSApp.activate(ignoringOtherApps: true)
+        // a global monitor only sees clicks in other apps: those dismiss it
+        if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] e in
+            let src = e.cgEvent.map { pid_t($0.getIntegerValueField(.eventSourceUnixProcessID)) } ?? 0
+            let state = e.cgEvent.map { $0.getIntegerValueField(.eventSourceStateID) } ?? 0
+            self?.onLog?("outside click type=\(e.type.rawValue) at=\(NSStringFromPoint(NSEvent.mouseLocation)) src=\(src) \(NSRunningApplication(processIdentifier: src)?.localizedName ?? "?") state=\(state)")
+            self?.close()
+        }) { monitors.append(m) }
+        if let m = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] e in
+            guard e.keyCode == 53 else { return e }
+            self?.close(handBack: true); return nil
+        }) { monitors.append(m) }
+    }
+
+    func popoverShouldClose(_ popover: NSPopover) -> Bool {
+        onLog?("shouldClose ev=\(NSApp.currentEvent?.type.rawValue ?? 0) active=\(NSApp.isActive) " + Thread.callStackSymbols.prefix(14).map { $0.split(separator: " ").dropFirst(3).prefix(1).joined() }.joined(separator: " < "))
+        return true
+    }
+
+    func close(handBack: Bool = false) {
+        onLog?("close() handBack=\(handBack) shown=\(popover.isShown)")
+        monitors.forEach { NSEvent.removeMonitor($0) }
+        monitors = []
+        let src = source
+        source = nil
+        guard popover.isShown else { return }
         popover.performClose(nil)
-        if let o = outside { NSEvent.removeMonitor(o) }
-        outside = nil
+        // closed from the icon or Esc: give the keyboard back to the app you were in (an outside click already did)
+        guard handBack, let src, !src.isTerminated else { return }
+        DispatchQueue.main.async { if NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid() { src.activate() } }
     }
 
     private func showMenu() {

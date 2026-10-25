@@ -144,6 +144,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                      "dockPreset": DockPresets.shared.activeName, "dockCount": DockPresets.shared.presets.count, "dockShown": TaruDock.shared.shown, "wpPlaying": Wallpaper.shared.playing, "capOverlay": Capture.shared.overlay != nil, "capWindows": Capture.shared.overlay?.windows.map { "\($0.isVisible) key:\($0.isKeyWindow) lvl:\($0.level.rawValue) \(NSStringFromRect($0.frame))" } ?? [], "appActive": NSApp.isActive, "hotkeys": HotKeys.shared.statuses.map { "\($0.key)=\($0.value)" }, "barCPU": TaruBarModel.shared.cpu.last ?? -1, "barTemp": TaruBarModel.shared.temperature ?? -999, "wpCurrent": Wallpaper.shared.current, "dockFrame": NSStringFromRect(TaruDock.shared.panel.frame), "xdrOn": Brightness.shared.on, "xdrFactor": Brightness.shared.factor, "xdrNote": Brightness.shared.note, "awakeHolding": Awake.shared.holding, "awakeReason": Awake.shared.reason]
             if let d = try? JSONSerialization.data(withJSONObject: st, options: .prettyPrinted) { try? d.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-state.json")) }
         }
+        // object: "dump" | "toggle" (popup, no mouse) | "set <app id> <volume>" | "mute <app id>"  → /tmp/tarutweaks-mixer.json
+        dc.addObserver(forName: .init("com.taru.tweaks.mixer"), object: nil, queue: .main) { n in
+            let m = Mixer.shared
+            let parts = (n.object as? String ?? "dump").split(separator: " ").map(String.init)
+            if parts.first == "toggle" { m.statusItem?.toggle() }
+            if parts.first == "set", parts.count == 3, let a = m.apps.first(where: { $0.id == parts[1] }), let v = Double(parts[2]) { m.set(a, volume: v) }
+            if parts.first == "mute", parts.count == 2, let a = m.apps.first(where: { $0.id == parts[1] }) { m.toggleMute(a) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                var d = m.dump(); d["popupShown"] = m.statusItem?.isShown ?? false; d["appActive"] = NSApp.isActive
+                if let j = try? JSONSerialization.data(withJSONObject: d, options: .prettyPrinted) { try? j.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-mixer.json")) }
+            }
+        }
         dc.addObserver(forName: .init("com.taru.tweaks.notifytest"), object: nil, queue: .main) { _ in
             UNUserNotificationCenter.current().getNotificationSettings { s in
                 let c = UNMutableNotificationContent(); c.title = "Battery"; c.body = "Test notification"
