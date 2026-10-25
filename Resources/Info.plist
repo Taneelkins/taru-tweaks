@@ -24,6 +24,8 @@
 	<string>1</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Taru Tweaks sets each app's volume on its own in the Volume Mixer.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Taru · personal build</string>
 </dict>
