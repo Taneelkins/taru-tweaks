@@ -56,13 +56,16 @@ final class QuitGuard: ObservableObject {
         guard let app = target else { return }
         timer = nil; target = nil; swallowUp = true
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { log("dropped, \(app.localizedName ?? "?") lost focus"); hud.hide(); return }
-        // replay the real ⌘Q instead of terminate(): an app with a sheet or open panel up ignores
-        // quit requests (TextEdit's launch panel answers "user canceled") but handles the key fine
-        for down in [true, false] {
-            let e = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(Self.qKey), keyDown: down)
-            e?.flags = .maskCommand
-            e?.setIntegerValueField(.eventSourceUserData, value: Self.marker)
-            e?.post(tap: .cghidEventTap)
+        // ask the app to quit (same as its Quit menu item, so unsaved work still prompts). Apps ignore a
+        // ⌘Q we post ourselves while the real Q is held, so the key replay is only the fallback
+        // for apps that refuse the request, like Steam
+        if !app.terminate() || app.bundleIdentifier == "com.valvesoftware.steam" {
+            for down in [true, false] {
+                let e = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(Self.qKey), keyDown: down)
+                e?.flags = .maskCommand
+                e?.setIntegerValueField(.eventSourceUserData, value: Self.marker)
+                e?.post(tap: .cghidEventTap)
+            }
         }
         log("quit \(app.localizedName ?? "?")")
         hud.done()
