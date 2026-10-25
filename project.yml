@@ -57,6 +57,7 @@ targets:
         LSUIElement: true
         CFBundleIconFile: AppIcon
         NSHumanReadableCopyright: "Taru · personal build"
+        NSAudioCaptureUsageDescription: "Taru Tweaks sets each app's volume on its own in the Volume Mixer."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.taru.tweaks
