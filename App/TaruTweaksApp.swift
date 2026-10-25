@@ -74,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         StatusItems.shared.start()
         Responsiveness.shared.start()
         Awake.shared.start()
+        Clipboard.shared.start()
         updateDockIcon()
         for sig in [SIGTERM, SIGINT] {
             signal(sig, SIG_IGN)
@@ -175,7 +176,7 @@ final class Nav: ObservableObject { @Published var page = "general" }
 struct SettingsRoot: View {
     @EnvironmentObject var nav: Nav
     let groups = [
-        SidebarGroup(id: "Taru Tweaks", items: [SidebarItem(id: "general", title: "General", icon: "square.grid.2x2"), SidebarItem(id: "bar", title: "Taru Bar", icon: "menubar.arrow.up.rectangle"), SidebarItem(id: "menubar", title: "Menu Bar", icon: "menubar.rectangle"), SidebarItem(id: "theme", title: "Theme", icon: "paintpalette"), SidebarItem(id: "awake", title: "Stay Awake", icon: "cup.and.saucer"), SidebarItem(id: "quit", title: "Quit Protection", icon: "hand.raised")]),
+        SidebarGroup(id: "Taru Tweaks", items: [SidebarItem(id: "general", title: "General", icon: "square.grid.2x2"), SidebarItem(id: "bar", title: "Taru Bar", icon: "menubar.arrow.up.rectangle"), SidebarItem(id: "menubar", title: "Menu Bar", icon: "menubar.rectangle"), SidebarItem(id: "theme", title: "Theme", icon: "paintpalette"), SidebarItem(id: "awake", title: "Stay Awake", icon: "cup.and.saucer"), SidebarItem(id: "quit", title: "Quit Protection", icon: "hand.raised"), SidebarItem(id: "clipboard", title: "Clipboard", icon: "doc.on.clipboard")]),
         SidebarGroup(id: "Windows", items: [SidebarItem(id: "switcher.shortcuts", title: "Switcher", icon: "rectangle.on.rectangle"), SidebarItem(id: "switcher.appearance", title: "Look", icon: "square.grid.3x2"),
                                            SidebarItem(id: "switcher.controls", title: "Controls", icon: "keyboard"), SidebarItem(id: "switcher.exceptions", title: "Exceptions", icon: "nosign"),
                                            SidebarItem(id: "desktop", title: "Desktop", icon: "menubar.dock.rectangle"), SidebarItem(id: "dock", title: "Taru Dock", icon: "dock.rectangle")]),
@@ -198,6 +199,7 @@ struct SettingsRoot: View {
             case "capture": CaptureSettings()
             case "awake": AwakeSettings()
             case "quit": QuitGuardSettings()
+            case "clipboard": ClipboardSettings()
             default: BrightnessSettings()
             }
         }
