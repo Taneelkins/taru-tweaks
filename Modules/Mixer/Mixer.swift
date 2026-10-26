@@ -24,7 +24,7 @@ final class Mixer: ObservableObject {
     @Published var volumes: [String: Double] = (UserDefaults.standard.dictionary(forKey: "mixer.volumes") as? [String: Double]) ?? [:]
     @Published var muted: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "mixer.muted") ?? [])
     @Published private(set) var needsPermission = false
-    @Published var enabled = UserDefaults.standard.object(forKey: "mixer.enabled") as? Bool ?? false {
+    @Published var enabled = UserDefaults.standard.object(forKey: "mixer.enabled") as? Bool ?? true {
         didSet { UserDefaults.standard.set(enabled, forKey: "mixer.enabled"); enabled ? start() : stop() }
     }
     @Published var menuIcon = UserDefaults.standard.object(forKey: "mixer.menu") as? Bool ?? true {

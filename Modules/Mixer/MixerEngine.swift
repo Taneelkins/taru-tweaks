@@ -63,6 +63,8 @@ enum HAL {
             var alive: UInt32 = 1, hidden: UInt32 = 0
             if read(dev, kAudioDevicePropertyDeviceIsAlive, &alive), alive == 0 { return nil }
             if read(dev, kAudioDevicePropertyIsHidden, &hidden), hidden != 0 { return nil }
+            // our own tap aggregates appear here too; counting them read every new tap as an output change
+            if string(dev, kAudioObjectPropertyName) == "Taru Mixer" { return nil }
             return uid(dev)
         }
     }

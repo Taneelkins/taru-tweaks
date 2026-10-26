@@ -95,7 +95,7 @@ final class TaruStatusItem: NSObject, NSPopoverDelegate {
     }
 
     func popoverShouldClose(_ popover: NSPopover) -> Bool {
-        onLog?("shouldClose ev=\(NSApp.currentEvent?.type.rawValue ?? 0) active=\(NSApp.isActive) " + Thread.callStackSymbols.prefix(14).map { $0.split(separator: " ").dropFirst(3).prefix(1).joined() }.joined(separator: " < "))
+        onLog?("shouldClose ev=\(NSApp.currentEvent?.type.rawValue ?? 0) active=\(NSApp.isActive)")
         return true
     }
 
