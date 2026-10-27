@@ -1,6 +1,15 @@
 # Taru Tweaks
 
-Personal macOS utility for a MacBook Pro (M5, macOS 26). One app, one set of permissions, modules for:
+![macOS 26](https://img.shields.io/badge/macOS-26-black?logo=apple) ![Swift](https://img.shields.io/badge/Swift-SwiftUI%20%2B%20AppKit-F05138?logo=swift&logoColor=white) ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M5-555) ![License](https://img.shields.io/badge/license-MIT-blue)
+
+One macOS app that replaces AltTab, Bartender, AlDente, BrightIntosh, Muro and the Dock, plus a Windows-style Task Manager. Built for a MacBook Pro (M5, macOS 26).
+
+<p align="center">
+  <img src="docs/settings.png" width="49%" alt="Taru Tweaks settings window">
+  <img src="docs/task-manager.png" width="49%" alt="Task Manager processes view">
+</p>
+
+One app, one set of permissions, modules for:
 
 | Module | Replaces | Highlights |
 |---|---|---|
