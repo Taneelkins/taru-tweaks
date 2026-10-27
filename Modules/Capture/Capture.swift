@@ -94,10 +94,18 @@ final class Capture {
         for retired: UInt32 in [503, 504] { HotKeys.shared.set(retired, mask: 0, key: 0, enabled: false) {} }
     }
 
+    // set the moment a shortcut fires, before the async screen grab; a second press in that gap used to
+    // build a second overlay and orphan the first one on screen with no way to close it
+    private var starting = false
+
     func run(_ action: CaptureAction) {
-        guard overlay == nil, scrolling == nil else { return }
+        // pressing the shortcut again while one is open works as Esc
+        if let overlay { overlay.finish(.cancel); return }
+        guard !starting, scrolling == nil else { return }
+        starting = true
         previousApp = NSWorkspace.shared.frontmostApplication
         Task { @MainActor in
+            defer { self.starting = false }
             guard let shots = await self.grabDisplays(), !shots.isEmpty else {
                 self.toast.show("Screen Recording permission is off for Taru Tweaks")
                 return
