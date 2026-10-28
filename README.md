@@ -1,6 +1,6 @@
 # Taru Tweaks
 
-![macOS 26](https://img.shields.io/badge/macOS-26-black?logo=apple) ![Swift](https://img.shields.io/badge/Swift-SwiftUI%20%2B%20AppKit-F05138?logo=swift&logoColor=white) ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M5-555) ![License](https://img.shields.io/badge/license-MIT-blue)
+![macOS 26](https://img.shields.io/badge/macOS-26-black?logo=apple) ![Swift](https://img.shields.io/badge/Swift-SwiftUI%20%2B%20AppKit-F05138?logo=swift&logoColor=white) ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-M5-555) ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 
 One macOS app that replaces AltTab, Bartender, AlDente, BrightIntosh, Muro and the Dock, plus a Windows-style Task Manager. Built for a MacBook Pro (M5, macOS 26).
 
@@ -42,3 +42,7 @@ Signing uses the local Apple Development certificate (see `project.yml`). Keep t
 - `TaskManagerApp/` standalone Task Manager app entry point
 - `Shared/` theme, settings UI kit, hotkeys, battery config shared with the helper
 - `Helper/` root launch daemon (`com.taru.tweaks.helper`) registered with `SMAppService`
+
+## License
+
+GPL-3.0-or-later, see `LICENSE`. The Volume Mixer's audio engine (`Modules/Mixer/MixerEngine.swift`) is ported from [Vorssaint](https://github.com/vorssaint/vorssaint-utils) (GPL-3.0-or-later). The lock-screen wallpaper extension is adapted from Phosphene (MIT, see `WallpaperExtension/LICENSE-Phosphene`).
