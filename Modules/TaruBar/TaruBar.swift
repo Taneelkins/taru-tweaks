@@ -89,7 +89,11 @@ final class TaruBar {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self?.place() }
             }
         }
-        ws.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in self?.place() }
+        ws.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.place()
+            // again once the menu bar has finished sliding in or out
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { self?.place() }
+        }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in self?.place() }
         let dc = DistributedNotificationCenter.default()
         dc.addObserver(forName: .init("com.spotify.client.PlaybackStateChanged"), object: nil, queue: .main) { [weak self] n in self?.music(n.userInfo) }
@@ -290,6 +294,8 @@ final class TaruBar {
         let anything = model.showCPU || model.showRAM || (model.showMusic && !model.track.isEmpty) || (model.showWeather && !model.weatherText.isEmpty) || (model.showClaude && ClaudeLimits.shared.session != nil)
         guard anything else { panel.orderOut(nil); return }
         let f = screen.frame
+        // a full-screen app slides the menu bar away; the readouts go with it instead of floating over the app
+        guard Self.menuBarShown(on: f) else { panel.orderOut(nil); return }
         let barHeight = max(f.maxY - screen.visibleFrame.maxY, screen.auxiliaryTopRightArea?.height ?? 0, 24)
         let notchRight = screen.auxiliaryTopRightArea?.minX ?? f.minX
         let start = max(notchRight + 6, f.minX + appMenusMaxX() + 12)
@@ -309,6 +315,19 @@ final class TaruBar {
         }
         panel.setFrame(NSRect(x: x0, y: f.maxY - barHeight, width: end - x0, height: barHeight), display: true)
         panel.orderFrontRegardless()
+    }
+
+    // the Window Server draws each display's menu bar as its own "Menubar" window; in a full-screen Space it's gone
+    static func menuBarShown(on f: NSRect) -> Bool {
+        // window names need Screen Recording; without it, never hide on a guess
+        guard CGPreflightScreenCaptureAccess() else { return true }
+        let top = (NSScreen.screens.first?.frame.maxY ?? f.maxY) - f.maxY
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        return info.contains { w in
+            guard (w[kCGWindowOwnerName as String] as? String) == "Window Server", (w[kCGWindowName as String] as? String) == "Menubar",
+                  let b = w[kCGWindowBounds as String] as? NSDictionary, let r = CGRect(dictionaryRepresentation: b) else { return false }
+            return r.maxY > top + 1 && r.minX < f.maxX && r.maxX > f.minX
+        }
     }
 
     // MARK: Stats
