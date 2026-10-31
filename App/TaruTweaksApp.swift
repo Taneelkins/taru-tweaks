@@ -141,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                      "selectedTitle": sw.windows.indices.contains(sw.selected) ? "\(sw.windows[sw.selected].appName) | \(sw.windows[sw.selected].title)" : "",
                                      "front": NSWorkspace.shared.frontmostApplication?.localizedName ?? "",
                                      "native1": SkyLight.hotKeyValue(1), "native27": SkyLight.hotKeyEnabled(27),
-                                     "dockPreset": DockPresets.shared.activeName, "dockCount": DockPresets.shared.presets.count, "dockShown": TaruDock.shared.shown, "wpPlaying": Wallpaper.shared.playing, "capOverlay": Capture.shared.overlay != nil, "capWindows": Capture.shared.overlay?.windows.map { "\($0.isVisible) key:\($0.isKeyWindow) lvl:\($0.level.rawValue) \(NSStringFromRect($0.frame))" } ?? [], "appActive": NSApp.isActive, "hotkeys": HotKeys.shared.statuses.map { "\($0.key)=\($0.value)" }, "barCPU": TaruBarModel.shared.cpu.last ?? -1, "barTemp": TaruBarModel.shared.temperature ?? -999, "wpCurrent": Wallpaper.shared.current, "dockFrame": NSStringFromRect(TaruDock.shared.panel.frame), "xdrOn": Brightness.shared.on, "xdrFactor": Brightness.shared.factor, "xdrNote": Brightness.shared.note, "awakeHolding": Awake.shared.holding, "awakeReason": Awake.shared.reason]
+                                     "dockPreset": DockPresets.shared.activeName, "dockCount": DockPresets.shared.presets.count, "dockShown": TaruDock.shared.shown, "wpPlaying": Wallpaper.shared.playing, "capOverlay": Capture.shared.overlay != nil, "capWindows": Capture.shared.overlay?.windows.map { "\($0.isVisible) key:\($0.isKeyWindow) lvl:\($0.level.rawValue) \(NSStringFromRect($0.frame))" } ?? [], "appActive": NSApp.isActive, "hotkeys": HotKeys.shared.statuses.map { "\($0.key)=\($0.value)" }, "barCPU": TaruBarModel.shared.cpu.last ?? -1, "barTemp": TaruBarModel.shared.temperature ?? -999, "wpCurrent": Wallpaper.shared.current, "dockFrame": NSStringFromRect(TaruDock.shared.panel.frame), "xdrOn": Brightness.shared.on, "xdrFactor": Brightness.shared.factor, "xdrNote": Brightness.shared.note, "awakeHolding": Awake.shared.holding, "awakeReason": Awake.shared.reason, "extraDisplay": ExtraDisplay.shared.connected]
             if let d = try? JSONSerialization.data(withJSONObject: st, options: .prettyPrinted) { try? d.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-state.json")) }
         }
         // object: "dump" | "toggle" (popup, no mouse) | "set <app id> <volume>" | "mute <app id>"  → /tmp/tarutweaks-mixer.json
@@ -155,6 +155,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 var d = m.dump(); d["popupShown"] = m.statusItem?.isShown ?? false; d["appActive"] = NSApp.isActive
                 if let j = try? JSONSerialization.data(withJSONObject: d, options: .prettyPrinted) { try? j.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-mixer.json")) }
             }
+        }
+        // object: "on" | "off" | "toggle" (same path as the popup switch)
+        dc.addObserver(forName: .init("com.taru.tweaks.display"), object: nil, queue: .main) { n in
+            let x = ExtraDisplay.shared
+            switch n.object as? String { case "on": x.set(true); case "off": x.set(false); default: x.toggle() }
         }
         dc.addObserver(forName: .init("com.taru.tweaks.notifytest"), object: nil, queue: .main) { _ in
             UNUserNotificationCenter.current().getNotificationSettings { s in
@@ -228,6 +233,7 @@ struct GeneralPage: View {
     @ObservedObject var switcher = SwitcherPrefs.shared
     @ObservedObject var battery = BatteryModel.shared
     @ObservedObject var bright = Brightness.shared
+    @ObservedObject var extra = ExtraDisplay.shared
     @ObservedObject var theme = Theme.shared
     let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -254,6 +260,7 @@ struct GeneralPage: View {
             SettingRow(title: "Dock right-click Force Quit") { Switch(on: $switcher.dockForceQuit) }
             SettingRow(title: "Battery control") { Switch(on: Binding(get: { battery.config.enabled }, set: { v in battery.update { $0.enabled = v } })) }
             SettingRow(title: "XDR Boost") { Switch(on: $bright.on) }
+            SettingRow(title: "Extra display", detail: "Plugs the \(extra.name) virtual screen in or out") { Switch(on: extra.on) }
             SettingRow(title: "Task Manager shortcut", detail: "Opens the Task Manager app from anywhere") { TaskManagerKey() }
             SectionLabel(text: "App")
             SettingRow(title: "Always show in the Dock", detail: "Otherwise the Dock icon only appears while a Taru Tweaks window is open") {
@@ -282,6 +289,7 @@ struct MainMenu: View {
             row("Window switcher", "⌘⇥ windows · ⌥⇥ apps", $switcher.enabled)
             row("Show Desktop", "\(modifierString(switcher.desktopMask))\(keyString(switcher.desktopKey))", $switcher.showDesktop)
             row("XDR Boost", "\(bright.nits) nits", $bright.on)
+            ExtraDisplayRow()
             AwakeRow()
             HStack { Text("Task Manager").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.bone); Spacer(); Text("⌃⇧Esc").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash) }
             row("Battery limit", "\(battery.battery.percent)% · \(battery.status?.reason ?? "helper off")", Binding(get: { battery.config.enabled }, set: { v in battery.update { $0.enabled = v } }))

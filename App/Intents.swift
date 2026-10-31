@@ -92,6 +92,11 @@ struct ToggleXDRBoost: AppIntent {
     @MainActor func perform() async throws -> some IntentResult { Brightness.shared.on.toggle(); return .result() }
 }
 
+struct ToggleExtraDisplay: AppIntent {
+    static var title: LocalizedStringResource = "Toggle Extra Display"
+    @MainActor func perform() async throws -> some IntentResult { ExtraDisplay.shared.toggle(); return .result() }
+}
+
 struct ShowDesktop: AppIntent {
     static var title: LocalizedStringResource = "Show Desktop"
     @MainActor func perform() async throws -> some IntentResult { WindowEngine.shared.toggleShowDesktop(); return .result() }
