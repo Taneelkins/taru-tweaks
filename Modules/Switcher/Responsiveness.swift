@@ -14,10 +14,11 @@ final class Responsiveness {
     }
 
     private func probe() {
-        guard AXIsProcessTrusted(), Self.taskManagerOnScreen() else { return }
+        guard AXIsProcessTrusted(), NSRunningApplication.runningApplications(withBundleIdentifier: "com.taru.taskmanager").first != nil else { return }
         let me = ProcessInfo.processInfo.processIdentifier
         let pids = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && $0.processIdentifier != me && $0.isFinishedLaunching }.map(\.processIdentifier)
         queue.async { [self] in
+            guard Self.taskManagerOnScreen() else { return }
             var hung: [pid_t] = []
             for pid in pids {
                 let el = AXUIElementCreateApplication(pid)

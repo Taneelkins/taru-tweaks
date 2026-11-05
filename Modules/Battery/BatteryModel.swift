@@ -100,10 +100,19 @@ final class BatteryModel: ObservableObject {
         refresh(); loadHistory(); refreshEnergy()
         timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.refresh() }
         slow = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            self?.loadHistory(); self?.refreshEnergy(); self?.beat()
+            self?.loadHistory(); self?.refreshEnergy(); self?.beat(); self?.refreshHelperState()
         }
         beat()
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    // asking launchd blocks for 30 ms+ (seconds when the Mac is busy), so never on the main thread
+    func refreshHelperState() {
+        let service = service
+        DispatchQueue.global(qos: .utility).async {
+            let s = service.status
+            DispatchQueue.main.async { if self.helperState != s { self.helperState = s } }
+        }
     }
 
     var helperAlive: Bool { guard let s = status else { return false }; return Date().timeIntervalSince1970 - s.updated < 90 }
@@ -137,7 +146,6 @@ final class BatteryModel: ObservableObject {
 
     func refresh() {
         battery = readBatteryInfo()
-        helperState = service.status
         if let d = try? Data(contentsOf: TweaksDir.appendingPathComponent("status.json")), let s = try? JSONDecoder().decode(BatteryStatus.self, from: d) {
             status = s
             upgradeIfNeeded()

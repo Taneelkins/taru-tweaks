@@ -35,12 +35,20 @@ final class Awake: ObservableObject {
 
     private func save(_ key: String, _ value: Any) { UserDefaults.standard.set(value, forKey: key) }
 
+    private let work = DispatchQueue(label: "awake", qos: .utility)
+
+    // detect() runs ps and walks ~/.claude, which froze the whole app for ~0.1 s every 20 s; do it off the main thread
     func tick() {
-        let busy = enabled ? detect() : nil
-        claudeBusy = busy != nil
-        if manual { hold("Kept awake by hand") }
-        else if let busy { hold(busy) }
-        else { release() }
+        let on = enabled
+        work.async { [self] in
+            let busy = on ? detect() : nil
+            DispatchQueue.main.async { [self] in
+                claudeBusy = busy != nil
+                if manual { hold("Kept awake by hand") }
+                else if let busy { hold(busy) }
+                else { release() }
+            }
+        }
     }
 
     private func detect() -> String? {

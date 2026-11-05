@@ -68,6 +68,13 @@ final class SelectionOverlay {
     }
 
     func refreshAll() { windows.forEach { $0.view.needsDisplay = true } }
+    private weak var active: OverlayView?
+    // the screen the mouse just left needs one last redraw to drop its crosshair and highlight
+    func entered(_ v: OverlayView) {
+        guard active !== v else { return }
+        active = v
+        windows.forEach { if $0.view !== v { $0.view.clearHover() } }
+    }
 }
 
 final class OverlayWindow: NSPanel {
@@ -111,6 +118,8 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     private var tools: NSHostingView<InPlaceTools>?
     private var actions: NSHostingView<InPlaceActions>?
     private var observer: Any?
+    // a click that landed on the tool/action bar before SwiftUI was ready to take it
+    private var forwarded: NSView?
     private var prefs: CapturePrefs { CapturePrefs.shared }
 
     init(shot: DisplayShot, owner: SelectionOverlay) {
@@ -176,17 +185,29 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         mouse = convert(e.locationInWindow, from: nil)
         if window?.isKeyWindow == false { window?.makeKey() }
         if !editing, owner?.editing == nil {
-            hovered = owner?.window(at: CGPoint(x: mouse.x + shot.screen.frame.minX, y: mouse.y + shot.screen.frame.minY))
+            let h = owner?.window(at: CGPoint(x: mouse.x + shot.screen.frame.minX, y: mouse.y + shot.screen.frame.minY))
+            if h?.0 != hovered?.0 { hovered = h }
         }
         updateCursor()
-        owner?.refreshAll()
+        // only this screen follows the mouse (crosshair, loupe); redrawing every screen's frozen image on each move
+        // (the 4K virtual display too) kept the app busy, so clicks queued up behind it
+        needsDisplay = true
+        owner?.entered(self)
     }
+
+    func clearHover() { hovered = nil; needsDisplay = true }
 
     override func mouseDown(with e: NSEvent) {
         let p = convert(e.locationInWindow, from: nil)
         mouse = p
         commitText()
         guard owner?.editing == nil || owner?.editing === self else { return }
+        // the bars sit on top of this view; if one didn't take the click itself, hand it over instead of starting a new selection
+        if editing, let bar = [actions, tools].compactMap({ $0 }).first(where: { !$0.isHidden && $0.frame.contains(p) }) {
+            bar.layoutSubtreeIfNeeded()
+            if let hit = bar.hitTest(p), hit !== self { forwarded = hit; hit.mouseDown(with: e) }
+            return
+        }
         if !editing { drag = .select(p); return }
         if let h = handle(at: p), let s = selection { drag = .resize(h, s); return }
         switch model.tool {
@@ -202,6 +223,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     }
 
     override func mouseDragged(with e: NSEvent) {
+        if let f = forwarded { f.mouseDragged(with: e); return }
         var p = convert(e.locationInWindow, from: nil)
         p.x = min(max(p.x, 0), bounds.width); p.y = min(max(p.y, 0), bounds.height)
         mouse = p
@@ -229,6 +251,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     }
 
     override func mouseUp(with e: NSEvent) {
+        if let f = forwarded { forwarded = nil; f.mouseUp(with: e); return }
         defer { drag = .none; updateCursor(); needsDisplay = true }
         switch drag {
         case .select:
@@ -437,6 +460,9 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         if ay < 4 { ay = s.maxY + 8 }
         if ay + asz.height > bounds.height - 4 { ay = s.minY + 8 }
         actions.frame = CGRect(x: ax, y: ay, width: asz.width, height: asz.height)
+        // lay the buttons out now, not at the end of the run loop, so a quick click right after the drag hits them
+        tools.layoutSubtreeIfNeeded(); actions.layoutSubtreeIfNeeded()
+        tools.displayIfNeeded(); actions.displayIfNeeded()
     }
 
     // MARK: Drawing

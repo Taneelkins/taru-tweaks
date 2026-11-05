@@ -172,24 +172,33 @@ final class Capture {
         if let app = previousApp, app.bundleIdentifier != Bundle.main.bundleIdentifier { app.activate() }
     }
 
+    // grabbing each screen through its SCDisplay took ~0.6 s a screen (seconds while WindowServer is busy);
+    // capturing the screen's rectangle is ~10x faster and needs no screen list first. The window list for
+    // window clicks is fetched alongside instead of before.
     func grabDisplays() async -> [DisplayShot]? {
-        guard CGPreflightScreenCaptureAccess(),
-              let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else { return nil }
-        self.content = content
-        var out: [DisplayShot] = []
-        for screen in NSScreen.screens {
-            guard let id = screen.displayID, let display = content.displays.first(where: { $0.displayID == id }) else { continue }
-            let cfg = SCStreamConfiguration()
-            cfg.width = Int(CGFloat(display.width) * screen.backingScaleFactor)
-            cfg.height = Int(CGFloat(display.height) * screen.backingScaleFactor)
-            cfg.showsCursor = false
-            cfg.captureResolution = .best
-            let filter = SCContentFilter(display: display, excludingWindows: [])
-            if let img = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: cfg) {
-                out.append(DisplayShot(screen: screen, displayID: id, image: img, scale: screen.backingScaleFactor))
+        guard CGPreflightScreenCaptureAccess() else { return nil }
+        Task { @MainActor in self.content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
+        // the BetterDisplay virtual screen is never looked at, and it's the biggest one to grab
+        let virtual = ExtraDisplay.shared.name
+        let jobs = NSScreen.screens.compactMap { s in s.displayID.map { (s, $0) } }.filter { $0.0.localizedName != virtual || NSScreen.screens.count == 1 }
+        var imgs: [Int: CGImage] = [:]
+        await withTaskGroup(of: (Int, CGImage?).self) { group in
+            for (n, job) in jobs.enumerated() {
+                let rect = CGDisplayBounds(job.1)
+                group.addTask { (n, await Capture.grab(rect, id: job.1, scale: job.0.backingScaleFactor)) }
             }
+            for await (n, img) in group { if let img { imgs[n] = img } }
         }
-        return out
+        return jobs.enumerated().compactMap { n, job in imgs[n].map { DisplayShot(screen: job.0, displayID: job.1, image: $0, scale: job.0.backingScaleFactor) } }
+    }
+
+    private static func grab(_ rect: CGRect, id: CGDirectDisplayID, scale: CGFloat) async -> CGImage? {
+        if #available(macOS 15.2, *) { return try? await SCScreenshotManager.captureImage(in: rect) }
+        guard let d = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true).displays.first(where: { $0.displayID == id }) else { return nil }
+        let cfg = SCStreamConfiguration()
+        cfg.width = Int(CGFloat(d.width) * scale); cfg.height = Int(CGFloat(d.height) * scale)
+        cfg.showsCursor = false; cfg.captureResolution = .best
+        return try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(display: d, excludingWindows: []), configuration: cfg)
     }
 
     private func captureWindow(_ id: CGWindowID, scale: CGFloat) async -> CGImage? {
