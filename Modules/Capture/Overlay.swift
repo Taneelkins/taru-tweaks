@@ -17,6 +17,8 @@ final class SelectionOverlay {
     let windowRects: [(CGWindowID, CGRect)]
     weak var editing: OverlayView?
     private var tucked: [NSWindow] = []
+    private var watchers: [Any] = []
+    private var keyMonitor: Any?
 
     init(shots: [DisplayShot], done: @escaping (Result) -> Void) {
         self.done = done
@@ -38,6 +40,19 @@ final class SelectionOverlay {
             key.makeKeyAndOrderFront(nil)
             key.makeFirstResponder(key.view)
         }
+        // an app coming to the front while the overlay is up (one finishing launch, a notification click) takes the
+        // keyboard, so Esc went to that app while the frozen screen still covered everything; take it back
+        watchers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
+            guard let self, !self.finished, (n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier != getpid() else { return }
+            let w = self.windows.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? self.windows.first
+            NSApp.activate(ignoringOtherApps: true)
+            w?.makeKeyAndOrderFront(nil)
+            w?.makeFirstResponder(w?.view)
+        })
+        // and if a keystroke still lands in another app, Esc closes the overlay anyway
+        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            if e.keyCode == 53 { self?.finish(.cancel) }
+        }
     }
 
     static func listWindows() -> [(CGWindowID, CGRect)] {
@@ -58,6 +73,8 @@ final class SelectionOverlay {
     func finish(_ r: Result) {
         guard !finished else { return }
         finished = true
+        watchers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }; watchers = []
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }; keyMonitor = nil
         windows.forEach { $0.orderOut(nil) }
         windows = []
         let back = tucked
