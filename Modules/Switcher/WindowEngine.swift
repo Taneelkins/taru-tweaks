@@ -23,6 +23,16 @@ struct Win: Identifiable, Equatable {
     static func == (a: Win, b: Win) -> Bool { a.id == b.id && a.pid == b.pid && a.title == b.title && a.minimized == b.minimized }
 }
 
+extension SCShareableContent {
+    // the async version force-unwraps and crashed the app when macOS answered with neither content nor an error
+    // (happened under heavy WindowServer load); the completion-handler one just hands back nil
+    static func fetch(desktop: Bool, onScreen: Bool) async -> SCShareableContent? {
+        await withCheckedContinuation { c in
+            SCShareableContent.getExcludingDesktopWindows(desktop, onScreenWindowsOnly: onScreen) { content, _ in c.resume(returning: content) }
+        }
+    }
+}
+
 func ax<T>(_ el: AXUIElement, _ name: String) -> T? {
     var v: CFTypeRef?
     guard AXUIElementCopyAttributeValue(el, name as CFString, &v) == .success else { return nil }
@@ -354,7 +364,7 @@ final class Thumbnails {
     func capture(_ ids: [CGWindowID]) {
         guard allowed, !ids.isEmpty else { return }
         Task {
-            guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) else { return }
+            guard let content = await SCShareableContent.fetch(desktop: true, onScreen: true) else { return }
             let found = Set(content.windows.map(\.windowID))
             await MainActor.run { self.stats["missing", default: 0] += ids.filter { !found.contains($0) }.count }
             for sw in content.windows where ids.contains(sw.windowID) {
@@ -376,7 +386,8 @@ final class Thumbnails {
         guard allowed else { return }
         Task {
             let content: SCShareableContent
-            do { content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false) } catch { await MainActor.run { self.lastError = "\(error)" }; return }
+            guard let c = await SCShareableContent.fetch(desktop: true, onScreen: false) else { await MainActor.run { self.lastError = "no window list" }; return }
+            content = c
             let byID = Dictionary(content.windows.map { ($0.windowID, $0) }, uniquingKeysWith: { a, _ in a })
             await withTaskGroup(of: (CGWindowID, CGImage?).self) { group in
                 for w in wins where !w.windowless && !w.minimized {

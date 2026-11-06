@@ -137,6 +137,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     private var observer: Any?
     // a click that landed on the tool/action bar before SwiftUI was ready to take it
     private var forwarded: NSView?
+    private var forwardingEcho = false
     private var prefs: CapturePrefs { CapturePrefs.shared }
 
     init(shot: DisplayShot, owner: SelectionOverlay) {
@@ -221,8 +222,14 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         guard owner?.editing == nil || owner?.editing === self else { return }
         // the bars sit on top of this view; if one didn't take the click itself, hand it over instead of starting a new selection
         if editing, let bar = [actions, tools].compactMap({ $0 }).first(where: { !$0.isHidden && $0.frame.contains(p) }) {
+            // a click on the bar's empty background comes back up the responder chain to here; handing it to the bar
+            // again looped until the stack overflowed (crash, 2026-11-05), so forward once and drop the echo
+            guard forwarded == nil else { return }
             bar.layoutSubtreeIfNeeded()
-            if let hit = bar.hitTest(p), hit !== self { forwarded = hit; hit.mouseDown(with: e) }
+            if let hit = bar.hitTest(p), hit !== self, hit !== bar {
+                forwarded = hit
+                hit.mouseDown(with: e)
+            }
             return
         }
         if !editing { drag = .select(p); return }
@@ -240,7 +247,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     }
 
     override func mouseDragged(with e: NSEvent) {
-        if let f = forwarded { f.mouseDragged(with: e); return }
+        if let f = forwarded { if !forwardingEcho { forwardingEcho = true; f.mouseDragged(with: e); forwardingEcho = false }; return }
         var p = convert(e.locationInWindow, from: nil)
         p.x = min(max(p.x, 0), bounds.width); p.y = min(max(p.y, 0), bounds.height)
         mouse = p
@@ -268,7 +275,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     }
 
     override func mouseUp(with e: NSEvent) {
-        if let f = forwarded { forwarded = nil; f.mouseUp(with: e); return }
+        if let f = forwarded { if !forwardingEcho { forwardingEcho = true; f.mouseUp(with: e); forwardingEcho = false }; forwarded = nil; return }
         defer { drag = .none; updateCursor(); needsDisplay = true }
         switch drag {
         case .select:

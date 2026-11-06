@@ -177,7 +177,7 @@ final class Capture {
     // window clicks is fetched alongside instead of before.
     func grabDisplays() async -> [DisplayShot]? {
         guard CGPreflightScreenCaptureAccess() else { return nil }
-        Task { @MainActor in self.content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
+        Task { @MainActor in self.content = await SCShareableContent.fetch(desktop: false, onScreen: true) }
         // the BetterDisplay virtual screen is never looked at, and it's the biggest one to grab
         let virtual = ExtraDisplay.shared.name
         let jobs = NSScreen.screens.compactMap { s in s.displayID.map { (s, $0) } }.filter { $0.0.localizedName != virtual || NSScreen.screens.count == 1 }
@@ -194,7 +194,7 @@ final class Capture {
 
     private static func grab(_ rect: CGRect, id: CGDirectDisplayID, scale: CGFloat) async -> CGImage? {
         if #available(macOS 15.2, *) { return try? await SCScreenshotManager.captureImage(in: rect) }
-        guard let d = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true).displays.first(where: { $0.displayID == id }) else { return nil }
+        guard let d = await SCShareableContent.fetch(desktop: false, onScreen: true)?.displays.first(where: { $0.displayID == id }) else { return nil }
         let cfg = SCStreamConfiguration()
         cfg.width = Int(CGFloat(d.width) * scale); cfg.height = Int(CGFloat(d.height) * scale)
         cfg.showsCursor = false; cfg.captureResolution = .best

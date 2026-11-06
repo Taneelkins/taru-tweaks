@@ -66,7 +66,7 @@ final class ScrollCapture {
     private var borderPanel: NSPanel?
 
     private func grab() async -> CGImage? {
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
+        guard let content = await SCShareableContent.fetch(desktop: false, onScreen: true),
               let id = screen.displayID, let display = content.displays.first(where: { $0.displayID == id }) else { return nil }
         let mine = content.applications.filter { $0.processID == getpid() }
         let cfg = SCStreamConfiguration()
