@@ -21,6 +21,8 @@ final class ModelCanvas: SCNView, SCNSceneRendererDelegate {
     private(set) var lightTurn: Float = 0        // how far the studio lights are turned round the model
     private(set) var backdrop = Backdrop.dark
     private(set) var view: String?               // "front" "back" "right" "left" "top" "bottom" while looking exactly from there
+    private var held = Set<String>()             // fly keys down right now (W A S D Q E)
+    private(set) var roaming = false             // flown away with the keys: the camera may go anywhere until F fits it again
     var onView: ((String?) -> Void)?
 
     var onClick: ((CGPoint) -> Void)?
@@ -183,9 +185,9 @@ final class ModelCanvas: SCNView, SCNSceneRendererDelegate {
     private func apply() {
         pitch = min(max(pitch, -.pi / 2), .pi / 2)
         distance = min(max(distance, radius * 0.02), radius * 60)
-        // the model can't be pushed out of reach
+        // the model can't be pushed out of reach, except by flying
         let away = target - center
-        if simd_length(away) > radius * 1.5 { target = center + simd_normalize(away) * radius * 1.5 }
+        if !roaming, simd_length(away) > radius * 1.5 { target = center + simd_normalize(away) * radius * 1.5 }
         let turn = turnNow
         let reach = simd_length(target - center) + radius
         rig.simdOrientation = turn
@@ -298,7 +300,7 @@ final class ModelCanvas: SCNView, SCNSceneRendererDelegate {
         let fromTarget = target, fromDistance = distance, fromCenter = center, fromRadius = radius
         if let low, let high { setBounds(low: low, high: high) }
         let toCenter = center, toRadius = radius, toDistance = fitDistance
-        fitted = true
+        fitted = true; roaming = false
         guard animated, onScreen else { target = center; distance = toDistance; apply(); return }
         run("camera", seconds: seconds) { [weak self] t in
             guard let self else { return }
@@ -361,9 +363,64 @@ final class ModelCanvas: SCNView, SCNSceneRendererDelegate {
     override func magnify(with e: NSEvent) { zoom(by: 1 / max(1 + Float(e.magnification), 0.2), at: convert(e.locationInWindow, from: nil)) }
     override func smartMagnify(with e: NSEvent) { reframe() }
 
+    // MARK: flying (W A S D forward/left/back/right along the view, Q up, E down, ⇧ slower)
+
+    private static let flyKeys: Set<String> = ["w", "a", "s", "d", "q", "e"]
+
     override func keyDown(with e: NSEvent) {
+        let flags = e.modifierFlags.intersection([.command, .control, .option])
+        if flags.isEmpty, let key = e.charactersIgnoringModifiers?.lowercased(), Self.flyKeys.contains(key) {
+            if held.insert(key).inserted, held.count == 1 { startFlying() }
+            return
+        }
         if !e.modifierFlags.contains(.command), let key = e.charactersIgnoringModifiers?.lowercased(), onKey?(key) == true { return }
         super.keyDown(with: e)
+    }
+
+    override func keyUp(with e: NSEvent) {
+        if let key = e.charactersIgnoringModifiers?.lowercased(), held.remove(key) != nil { if held.isEmpty { stop("fly") }; return }
+        super.keyUp(with: e)
+    }
+
+    // a key let go while another app or window had the keyboard never arrives here, so let go of all of them
+    override func resignFirstResponder() -> Bool { landFlying(); return super.resignFirstResponder() }
+    override func viewWillMove(toWindow w: NSWindow?) {
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: window)
+        if let w { NotificationCenter.default.addObserver(self, selector: #selector(windowLostKeys), name: NSWindow.didResignKeyNotification, object: w) }
+        super.viewWillMove(toWindow: w)
+    }
+    @objc private func windowLostKeys() { landFlying() }
+    private func landFlying() { held = []; stop("fly") }
+
+    var flying: Bool { running("fly") }
+
+    private func startFlying() {
+        stop("camera"); fitted = false
+        var pace: Float = 0
+        loop("fly") { [weak self] passed in
+            guard let self else { return }
+            // the real keyboard, so a key let go without a keyUp (menu opened, focus moved) doesn't keep you flying
+            if NSEvent.pressedMouseButtons == 0, !self.held.isEmpty, self.window?.isKeyWindow != true { self.landFlying(); return }
+            self.fly(by: self.held, seconds: Float(passed), pace: &pace)
+        }
+    }
+
+    // one step of flight: about the model's size per second, a quarter of that with ⇧ for fine moves, easing in over a quarter second
+    func fly(by keys: Set<String>, seconds: Float, pace: inout Float) {
+        let turn = turnNow
+        var move = SIMD3<Float>(repeating: 0)
+        if keys.contains("w") { move += turn.act([0, 0, -1]) }
+        if keys.contains("s") { move += turn.act([0, 0, 1]) }
+        if keys.contains("d") { move += turn.act([1, 0, 0]) }
+        if keys.contains("a") { move += turn.act([-1, 0, 0]) }
+        if keys.contains("q") { move += [0, 1, 0] }
+        if keys.contains("e") { move += [0, -1, 0] }
+        guard simd_length(move) > 0.001 else { return }
+        pace = min(pace + seconds * 4, 1)
+        let slow: Float = NSEvent.modifierFlags.contains(.shift) ? 0.25 : 1
+        target += simd_normalize(move) * radius * 1.2 * slow * pace * seconds
+        roaming = true
+        apply()
     }
 
     override func performKeyEquivalent(with e: NSEvent) -> Bool {

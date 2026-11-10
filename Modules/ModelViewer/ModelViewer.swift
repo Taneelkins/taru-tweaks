@@ -118,6 +118,10 @@ final class ModelViewer {
         case "tab" where parts.count == 2: if let t = SideTab(rawValue: parts[1]) { doc?.tab = t; doc?.panel = true }
         case "seek" where parts.count == 2: if let t = Double(parts[1]) { doc?.seek(t) }
         case "frame": doc?.canvas.reframe(animated: false)
+        case "fly" where parts.count == 2:
+            // "fly w 1.5" = hold those keys for that many seconds of flight (one step, no keyboard)
+            let v = parts[1].split(separator: " ").map(String.init)
+            if let doc, v.count == 2, let secs = Float(v[1]) { var pace: Float = 1; doc.canvas.fly(by: Set(v[0].map { String($0) }), seconds: secs, pace: &pace) }
         case "turn" where parts.count == 2:
             let v = parts[1].split(separator: " ").compactMap { Float($0) }
             if v.count == 2 { doc?.canvas.turn(dx: v[0], dy: v[1]) }
@@ -220,17 +224,17 @@ final class ModelDoc: ObservableObject {
             guard let self else { return false }
             switch key {
             case "f": self.canvas.reframe()
-            case "w": self.wireframe.toggle()
+            case "z": self.wireframe.toggle()
             case "c": self.clay.toggle()
-            case "s": self.spinning.toggle()
+            case "t": self.spinning.toggle()
             case "p": self.showTab(.parts)
-            case "a": self.showTab(.anims)
+            case "n": self.showTab(.anims)
             case "o": if self.clips.isEmpty { return false }; self.looping.toggle()
             case "[": if self.clips.isEmpty { return false }; self.setSpeed(self.speed / 2)
             case "]": if self.clips.isEmpty { return false }; self.setSpeed(self.speed * 2)
             case "\u{F702}": if self.clips.isEmpty { return false }; self.step(-1)
             case "\u{F703}": if self.clips.isEmpty { return false }; self.step(1)
-            case "e": self.explode()
+            case "x": self.explode()
             case "u": self.toggleDrawn()
             case "1": self.look("front")
             case "2": self.look("side")
@@ -622,7 +626,7 @@ final class ModelDoc: ObservableObject {
     func dump() -> [String: Any] {
         ["file": url?.path ?? "", "loading": loading, "problem": problem ?? "", "triangles": triangles, "parts": rows.count, "cutoutMaterials": cutouts, "loadSeconds": loadSeconds,
          "metal": canvas.renderingAPI == .metal, "device": canvas.device?.name ?? "", "wireframe": wireframe, "windowNumber": window.windowNumber, "visible": window.isVisible,
-         "frame": NSStringFromRect(window.frame), "screen": window.screen?.localizedName ?? "", "distance": canvas.distance, "yaw": canvas.yaw, "pitch": canvas.pitch,
+         "frame": NSStringFromRect(window.frame), "screen": window.screen?.localizedName ?? "", "distance": canvas.distance, "target": [canvas.target.x, canvas.target.y, canvas.target.z], "roaming": canvas.roaming, "yaw": canvas.yaw, "pitch": canvas.pitch,
          "pose": pose.rawValue, "canExplode": canExplode, "canDraw": canDraw, "spinning": spinning, "clips": clips.map { "\($0.name) \(String(format: "%.2f", $0.duration))s" },
          "clip": clip, "playing": playing, "time": clock, "speed": speed, "looping": looping, "tab": tab.rawValue, "facts": facts, "selected": selected ?? -1, "hidden": hiddenCount, "clay": clay, "panel": panel,
          "watching": watch != nil, "reloads": reloads, "toast": toast ?? "", "rows": rows.prefix(8).map { "\($0.name) \($0.triangles)" },
@@ -648,7 +652,7 @@ struct ModelViewerView: View {
                 if doc.loading { Text("LOADING").font(.system(size: 11, weight: .bold, design: .monospaced)).tracking(3).foregroundStyle(Palette.ash).allowsHitTesting(false) }
                 if showing {
                     VStack(alignment: .trailing, spacing: 10) {
-                        Text("drag turn · scroll or pinch zoom · ⇧ drag pan · ⌥ drag lights · click select · double-click zoom in")
+                        Text("WASD fly · Q up · E down · ⇧ slow · drag turn · scroll or pinch zoom · ⇧ drag pan · ⌥ drag lights · click select · double-click zoom in")
                             .font(.system(size: 10, design: .monospaced)).foregroundStyle(doc.backdrop.bright ? Palette.bone : Palette.ash.opacity(0.7)).lineLimit(1)
                             .padding(.horizontal, doc.backdrop.bright ? 8 : 0).padding(.vertical, doc.backdrop.bright ? 4 : 0)
                             .background(Color.black.opacity(doc.backdrop.bright ? plate : 0)).allowsHitTesting(false)
@@ -723,12 +727,12 @@ struct ModelViewerView: View {
             }
             HStack(spacing: 6) {
                 if doc.canDraw { ViewerChip(title: doc.pose == .drawn ? "Sheathe" : "Unsheath", key: "U", on: doc.pose == .drawn, plate: plate) { doc.toggleDrawn() } }
-                if doc.canExplode { ViewerChip(title: doc.explodeLabel, key: "E", on: doc.pose == .groups || doc.pose == .apart, plate: plate) { doc.explode() } }
-                ViewerChip(title: "Spin", key: "S", on: doc.spinning, plate: plate) { doc.spinning.toggle() }
+                if doc.canExplode { ViewerChip(title: doc.explodeLabel, key: "X", on: doc.pose == .groups || doc.pose == .apart, plate: plate) { doc.explode() } }
+                ViewerChip(title: "Spin", key: "T", on: doc.spinning, plate: plate) { doc.spinning.toggle() }
                 ViewerChip(title: "Clay", key: "C", on: doc.clay, plate: plate) { doc.clay.toggle() }
-                ViewerChip(title: "Wire", key: "W", on: doc.wireframe, plate: plate) { doc.wireframe.toggle() }
+                ViewerChip(title: "Wire", key: "Z", on: doc.wireframe, plate: plate) { doc.wireframe.toggle() }
                 ViewerChip(title: "Fit", key: "F", on: false, plate: plate) { doc.canvas.reframe() }
-                if !doc.clips.isEmpty { ViewerChip(title: "Anims", key: "A", on: doc.panel && doc.tab == .anims, plate: plate) { doc.showTab(.anims) } }
+                if !doc.clips.isEmpty { ViewerChip(title: "Anims", key: "N", on: doc.panel && doc.tab == .anims, plate: plate) { doc.showTab(.anims) } }
                 ViewerChip(title: "Parts", key: "P", on: doc.panel && doc.tab == .parts, plate: plate) { doc.showTab(.parts) }
             }
         }
@@ -744,7 +748,7 @@ struct ModelViewerView: View {
             if doc.clips.indices.contains(doc.clip) {
                 ViewerChip(title: doc.clips[doc.clip].name, key: doc.clips.count > 1 ? "\(doc.clip + 1)/\(doc.clips.count)" : "", on: false) { doc.nextClip() }
             }
-            ViewerChip(title: "\(SpeedBox.label(doc.speed))× · \(doc.looping ? "loop" : "once")", key: "A", on: false) { doc.showTab(.anims) }
+            ViewerChip(title: "\(SpeedBox.label(doc.speed))× · \(doc.looping ? "loop" : "once")", key: "N", on: false) { doc.showTab(.anims) }
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .background(Color.black.opacity(plate))
