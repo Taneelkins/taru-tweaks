@@ -295,7 +295,7 @@ final class ModelPoser {
         for stop in [from, via ?? to] { let b = Self.box(parts, everything, stop); travel = (simd_min(travel.low, b.low), simd_max(travel.high, b.high)) }
         func place(_ offsets: [SIMD3<Float>]) {
             now = offsets
-            for (i, part) in parts.enumerated() where !fixed[i] { part.node.simdWorldPosition = part.home + offsets[i] }
+            for (i, part) in parts.enumerated() where !fixed[i] { part.node.simdWorldPosition = canvas.room(part.home + offsets[i]) }
         }
         guard animated else { place(to); canvas.refit(low: end.low, high: end.high, animated: false, seconds: 0); return }
 

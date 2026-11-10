@@ -41,6 +41,7 @@ final class ModelClip {
 
 struct LoadedModel {
     let scene: SCNScene
+    let stage: SCNNode          // holds the model and the camera; turning it turns both under the studio lights
     let content: SCNNode
     let low: SIMD3<Float>
     let high: SIMD3<Float>
@@ -86,7 +87,9 @@ enum ModelLoader {
         for child in source.rootNode.childNodes { child.removeFromParentNode(); content.addChildNode(child) }
         // Blender's USD export is Z-up and SceneKit doesn't turn it
         if let up = source.attribute(forKey: SCNScene.Attribute.upAxis.rawValue) as? SCNVector3, up.z > 0.5 { content.eulerAngles.x = -.pi / 2 }
-        scene.rootNode.addChildNode(content)
+        let stage = SCNNode()
+        stage.addChildNode(content)
+        scene.rootNode.addChildNode(stage)
 
         var triangles = 0, cutouts = 0
         var parts: [ModelPart] = []
@@ -136,7 +139,7 @@ enum ModelLoader {
         for i in parts.indices { parts[i].branch = ObjectIdentifier(chains[i][min(shared, chains[i].count - 1)]) }
         var clips = named.enumerated().map { i, pair in ModelClip(name: pair.0.isEmpty ? "Clip \(i + 1)" : pair.0, players: [(content, "clip", ModelClip.player(pair.1))]) }
         if !moving.isEmpty { clips.append(ModelClip(name: "Animation", players: moving)) }
-        return LoadedModel(scene: scene, content: content, low: low, high: high, triangles: triangles, cutouts: cutouts, parts: parts, clips: clips.filter { $0.duration > 0 },
+        return LoadedModel(scene: scene, stage: stage, content: content, low: low, high: high, triangles: triangles, cutouts: cutouts, parts: parts, clips: clips.filter { $0.duration > 0 },
                            setup: ModelSetup.load(for: url), materials: materials.count, textures: images ?? pictures.count, largestTexture: largest)
     }
 
@@ -261,11 +264,30 @@ enum Studio {
         return ctx.makeImage()
     }()
 
-    static let backdrop: CGImage? = {
+    // a soft top-to-bottom fade behind the model: greys from the bottom, the middle and the top of the window
+    static func fade(_ bottom: CGFloat, _ middle: CGFloat, _ top: CGFloat) -> CGImage? {
         let w = 64, h = 512
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
-        let colors = [CGColor(red: 0.035, green: 0.035, blue: 0.04, alpha: 1), CGColor(red: 0.075, green: 0.075, blue: 0.085, alpha: 1), CGColor(red: 0.11, green: 0.11, blue: 0.125, alpha: 1)] as CFArray
+        // a touch of blue, like the app's own dark
+        let colors = [bottom, middle, top].map { CGColor(red: $0, green: $0, blue: min($0 * 1.13, 1), alpha: 1) } as CFArray
         ctx.drawLinearGradient(CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 0.55, 1])!, start: .zero, end: CGPoint(x: 0, y: h), options: [])
         return ctx.makeImage()
+    }
+}
+
+// what's behind the model; the lighting stays the studio's whichever is picked
+enum Backdrop: String, CaseIterable {
+    case dark, black, grey, light
+
+    var bright: Bool { self == .grey || self == .light }
+
+    private static let pictures: [Backdrop: CGImage] = {
+        var made: [Backdrop: CGImage] = [:]
+        made[.dark] = Studio.fade(0.035, 0.075, 0.11)
+        made[.grey] = Studio.fade(0.2, 0.27, 0.33)
+        made[.light] = Studio.fade(0.62, 0.74, 0.82)
+        return made
     }()
+
+    var picture: Any { Backdrop.pictures[self] ?? NSColor.black }
 }

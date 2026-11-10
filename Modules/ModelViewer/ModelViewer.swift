@@ -15,7 +15,8 @@ final class ModelViewer {
         // object: "dump" | "open <path>" (no focus steal, lands on the extra display if there is one) | "new" (empty window, same way) | "close"
         //         | "snap <png path>" | "bench" | "wire" | "frame" | "turn <dx> <dy>" | "pan <dx> <dy>" | "zoom <factor> [x y]"
         //         | "explode" (next step) | "draw" | "spin" | "play" | "seek <seconds>" | "clip" (next one) | "clay" | "panel"
-        //         | "select <n>" | "hide <n>" | "solo <n>" | "showall" | "copy" | "reload"  → /tmp/tarutweaks-model.json
+        //         | "select <n>" | "hide <n>" | "solo <n>" | "showall" | "copy" | "reload" | "view front|side|top" | "flat"
+        //         | "light <degrees>" | "backdrop" (next one) | "recent <n>" (open the nth recent file)  → /tmp/tarutweaks-model.json
         DistributedNotificationCenter.default().addObserver(forName: .init("com.taru.tweaks.model"), object: nil, queue: .main) { [weak self] n in self?.debug(n.object as? String ?? "dump") }
     }
 
@@ -30,7 +31,7 @@ final class ModelViewer {
         if let url, let same = docs.first(where: { $0.url == url }) {
             doc = same
         } else if let url, let empty = docs.first(where: { $0.url == nil }) {
-            doc = empty; doc.load(url)
+            doc = empty; doc.load(url, remember: !quiet)
         } else if url == nil, let empty = docs.first(where: { $0.url == nil }) {
             doc = empty
         } else {
@@ -42,7 +43,7 @@ final class ModelViewer {
                 self?.docs.removeAll { $0 === doc }
                 DispatchQueue.main.async { AppDelegate.shared.updateDockIcon() }
             }
-            if let url { doc.load(url) }
+            if let url { doc.load(url, remember: !quiet) }
         }
         if quiet {
             if let other = NSScreen.screens.first(where: { $0.localizedName == ExtraDisplay.shared.name }) {
@@ -57,6 +58,14 @@ final class ModelViewer {
         return doc
     }
 
+    // MARK: recent files (newest first; only files opened by hand, not the debug hook's)
+
+    var recent: [String] { UserDefaults.standard.stringArray(forKey: "model.recent") ?? [] }
+
+    func remember(_ url: URL) { UserDefaults.standard.set(Array(([url.path] + recent.filter { $0 != url.path }).prefix(12)), forKey: "model.recent") }
+    func forget(_ url: URL) { UserDefaults.standard.set(recent.filter { $0 != url.path }, forKey: "model.recent") }
+    func clearRecent() { UserDefaults.standard.removeObject(forKey: "model.recent") }
+
     func pick(into doc: ModelDoc? = nil) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = ModelLoader.types.compactMap { UTType(filenameExtension: $0) }
@@ -69,12 +78,17 @@ final class ModelViewer {
         let parts = command.split(separator: " ", maxSplits: 1).map(String.init)
         let doc = docs.last
         func write(_ extra: [String: Any] = [:]) {
-            var out: [String: Any] = ["windows": docs.map { $0.dump() }]
+            var out: [String: Any] = ["windows": docs.map { $0.dump() }, "recent": recent]
             extra.forEach { out[$0.key] = $0.value }
             if let j = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys]) { try? j.write(to: URL(fileURLWithPath: "/tmp/tarutweaks-model.json")) }
         }
         switch parts.first {
         case "open" where parts.count == 2: open(URL(fileURLWithPath: parts[1]), quiet: true)
+        case "view" where parts.count == 2: doc?.look(parts[1])
+        case "flat": doc?.flat.toggle()
+        case "light" where parts.count == 2: if let degrees = Float(parts[1]) { doc?.canvas.turnLight(by: degrees * .pi / 180) }
+        case "backdrop": doc?.nextBackdrop()
+        case "recent" where parts.count == 2: if let i = Int(parts[1]), recent.indices.contains(i) { doc?.load(URL(fileURLWithPath: recent[i])) }
         case "new": open(nil, quiet: true)
         case "pan" where parts.count == 2:
             let v = parts[1].split(separator: " ").compactMap { Float($0) }
@@ -149,6 +163,9 @@ final class ModelDoc: ObservableObject {
     @Published private(set) var time = 0.0
     @Published var playing = false { didSet { if playing != oldValue { play(playing) } } }
     @Published private(set) var toast: String?
+    @Published private(set) var view: String?
+    @Published var flat = false { didSet { if flat != oldValue { canvas.setFlat(flat) } } }
+    @Published private(set) var backdrop = Backdrop(rawValue: UserDefaults.standard.string(forKey: "model.backdrop") ?? "") ?? .dark
     private(set) var cutouts = 0
     private(set) var loadSeconds = 0.0
     private(set) var reloads = 0
@@ -177,6 +194,8 @@ final class ModelDoc: ObservableObject {
         if !window.setFrameUsingName("ModelViewer") { window.center() }
         window.setFrameAutosaveName(offset == 0 ? "ModelViewer" : "")
         if offset > 0 { window.setFrameOrigin(NSPoint(x: window.frame.minX + CGFloat(offset % 8) * 28, y: window.frame.minY - CGFloat(offset % 8) * 28)) }
+        canvas.setBackdrop(backdrop)
+        canvas.onView = { [weak self] name in self?.view = name }
         canvas.onClick = { [weak self] point in self?.select(self?.part(at: point)?.index, focus: false) }
         // double-click a spot to zoom in on it, double-click empty space to see everything again
         canvas.onDoubleClick = { [weak self] point in
@@ -193,6 +212,13 @@ final class ModelDoc: ObservableObject {
             case "p": self.panel.toggle()
             case "e": self.explode()
             case "u": self.toggleDrawn()
+            case "1": self.look("front")
+            case "2": self.look("side")
+            case "3": self.look("top")
+            case "4": self.flat.toggle()
+            case "l": self.turnLight()
+            case "b": self.nextBackdrop()
+            case "r": self.showRecent()
             case "h": if let i = self.selected { self.toggleHidden(i) } else { return false }
             case "i": if let i = self.selected { self.solo(i) } else { return false }
             case "\u{1b}": if self.selected != nil { self.select(nil, focus: false) } else { self.showAll() }
@@ -215,7 +241,7 @@ final class ModelDoc: ObservableObject {
         DispatchQueue.main.async { [window] in window.contentView = nil }
     }
 
-    func load(_ url: URL, again: Bool = false) {
+    func load(_ url: URL, again: Bool = false, remember: Bool = true) {
         ticket += 1
         let mine = ticket, started = Date()
         if !again { self.url = url; loading = true; problem = nil }
@@ -226,11 +252,12 @@ final class ModelDoc: ObservableObject {
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
             // watch the file from here: this thread has just read it, so macOS has nothing left to ask
             let descriptor = (try? result.get()) == nil ? -1 : open(url.path, O_EVTONLY)
+            let gone = descriptor < 0 && !FileManager.default.fileExists(atPath: url.path)
             DispatchQueue.main.async {
                 guard mine == self.ticket else { if descriptor >= 0 { close(descriptor) }; return }
                 // a re-export caught half-written: keep showing the old one and try once more
                 if again, case .failure = result {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { if mine == self.ticket { self.load(url) } }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { if mine == self.ticket { self.load(url, remember: false) } }
                     return
                 }
                 self.loading = false
@@ -259,12 +286,13 @@ final class ModelDoc: ObservableObject {
                     // a file with animation starts moving, like it would in the game
                     if !self.clips.isEmpty { self.playing = true }
                     self.watchFile(descriptor, url)
-                    if again { self.reloads += 1; self.flash("Reloaded") }
+                    if again { self.reloads += 1; self.flash("Reloaded") } else if remember { ModelViewer.shared.remember(url) }
                 case .failure(let error):
                     self.canvas.clear()
                     self.model = nil; self.poser = nil; self.canExplode = false; self.canDraw = false
                     self.triangles = 0; self.rows = []; self.facts = []; self.bytes = size
-                    self.problem = error.localizedDescription
+                    self.problem = gone ? "That file isn't there any more." : error.localizedDescription
+                    if gone { ModelViewer.shared.forget(url) }
                 }
             }
         }
@@ -369,6 +397,66 @@ final class ModelDoc: ObservableObject {
         canvas.needsDisplay = true
     }
 
+    // MARK: straight-on views, lights, backdrop, recent files
+
+    // "front", "side" or "top": looks straight from there; asked again while there, goes round to the far side
+    func look(_ side: String) {
+        let pairs = ["front": ("front", "back"), "side": ("right", "left"), "top": ("top", "bottom")]
+        guard model != nil, let (near, far) = pairs[side] else { return }
+        spinning = false
+        canvas.look(view == near ? far : near)
+    }
+
+    func viewLabel(_ side: String) -> String {
+        switch (side, view) {
+        case ("front", "back"): return "Back"
+        case ("side", "right"): return "Right"
+        case ("side", "left"): return "Left"
+        case ("top", "bottom"): return "Bottom"
+        default: return side.capitalized
+        }
+    }
+
+    func viewOn(_ side: String) -> Bool { ["front": ["front", "back"], "side": ["right", "left"], "top": ["top", "bottom"]][side]?.contains(view ?? "") == true }
+
+    // one press = an eighth of a turn; ⌥-drag turns them freely
+    func turnLight() {
+        guard model != nil else { return }
+        canvas.turnLight(by: .pi / 4)
+        var degrees = Int((canvas.lightTurn * 180 / .pi).rounded()) % 360
+        if degrees < 0 { degrees += 360 }
+        flash(degrees == 0 ? "Lights back to start" : "Lights turned \(degrees)°")
+    }
+
+    func nextBackdrop() {
+        let all = Backdrop.allCases
+        backdrop = all[((all.firstIndex(of: backdrop) ?? 0) + 1) % all.count]
+        UserDefaults.standard.set(backdrop.rawValue, forKey: "model.backdrop")
+        canvas.setBackdrop(backdrop)
+        if model != nil { flash("Backdrop: \(backdrop.rawValue)") }
+    }
+
+    func showRecent() {
+        let menu = NSMenu()
+        let others = ModelViewer.shared.recent.filter { $0 != url?.path }
+        for path in others {
+            let file = URL(fileURLWithPath: path)
+            let item = ClosureItem(file.lastPathComponent) { [weak self] in self?.load(file) }
+            if #available(macOS 14.4, *) { item.subtitle = (file.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath }
+            menu.addItem(item)
+        }
+        if others.isEmpty {
+            let none = NSMenuItem(title: "No other recent models", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+        }
+        menu.addItem(.separator())
+        menu.addItem(ClosureItem("Open…") { [weak self] in ModelViewer.shared.pick(into: self) })
+        if !ModelViewer.shared.recent.isEmpty { menu.addItem(ClosureItem("Clear this list") { [weak self] in ModelViewer.shared.clearRecent(); self?.objectWillChange.send() }) }
+        guard let window = canvas.window else { return }
+        menu.popUp(positioning: nil, at: canvas.convert(window.mouseLocationOutsideOfEventStream, from: nil), in: canvas)
+    }
+
     // MARK: poses
 
     // one press spaces the groups out, the next every single part, the next puts it back
@@ -455,7 +543,8 @@ final class ModelDoc: ObservableObject {
          "frame": NSStringFromRect(window.frame), "screen": window.screen?.localizedName ?? "", "distance": canvas.distance, "yaw": canvas.yaw, "pitch": canvas.pitch,
          "pose": pose.rawValue, "canExplode": canExplode, "canDraw": canDraw, "spinning": spinning, "clips": clips.map { "\($0.name) \(String(format: "%.2f", $0.duration))s" },
          "clip": clip, "playing": playing, "time": clock, "facts": facts, "selected": selected ?? -1, "hidden": hiddenCount, "clay": clay, "panel": panel,
-         "watching": watch != nil, "reloads": reloads, "toast": toast ?? "", "rows": rows.prefix(8).map { "\($0.name) \($0.triangles)" }]
+         "watching": watch != nil, "reloads": reloads, "toast": toast ?? "", "rows": rows.prefix(8).map { "\($0.name) \($0.triangles)" },
+         "view": view ?? "", "flat": flat, "light": Int((canvas.lightTurn * 180 / .pi).rounded()), "backdrop": backdrop.rawValue]
     }
 }
 
@@ -465,6 +554,8 @@ struct ModelViewerView: View {
     @State private var dropping = false
 
     private var showing: Bool { doc.url != nil && doc.problem == nil && !doc.loading }
+    // the dark plates behind the corner text get heavier when the backdrop is bright
+    private var plate: Double { doc.backdrop.bright ? 0.74 : 0.45 }
 
     var body: some View {
         // the parts panel sits beside the 3D view, never over the model
@@ -475,8 +566,10 @@ struct ModelViewerView: View {
                 if doc.loading { Text("LOADING").font(.system(size: 11, weight: .bold, design: .monospaced)).tracking(3).foregroundStyle(Palette.ash).allowsHitTesting(false) }
                 if showing {
                     VStack(alignment: .trailing, spacing: 10) {
-                        Text("drag turn · scroll or pinch zoom · ⇧ drag pan · click select · double-click zoom in")
-                            .font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.ash.opacity(0.7)).lineLimit(1).allowsHitTesting(false)
+                        Text("drag turn · scroll or pinch zoom · ⇧ drag pan · ⌥ drag lights · click select · double-click zoom in")
+                            .font(.system(size: 10, design: .monospaced)).foregroundStyle(doc.backdrop.bright ? Palette.bone : Palette.ash.opacity(0.7)).lineLimit(1)
+                            .padding(.horizontal, doc.backdrop.bright ? 8 : 0).padding(.vertical, doc.backdrop.bright ? 4 : 0)
+                            .background(Color.black.opacity(doc.backdrop.bright ? plate : 0)).allowsHitTesting(false)
                         if let toast = doc.toast {
                             Text(toast.uppercased()).font(.system(size: 10, weight: .bold, design: .monospaced)).tracking(1.5).foregroundStyle(Palette.pit)
                                 .padding(.horizontal, 10).padding(.vertical, 5).background(theme.accent).allowsHitTesting(false)
@@ -513,6 +606,14 @@ struct ModelViewerView: View {
             Text(doc.problem == nil ? "Drop a model here" : "Couldn't open \(doc.url?.lastPathComponent ?? "that file")").font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.bone)
             Text(doc.problem ?? ".usdz  .usd  .obj  .glb  .gltf").font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash).multilineTextAlignment(.center).frame(maxWidth: 420)
             TweakButton(title: "Open") { ModelViewer.shared.pick(into: doc) }.padding(.top, 4)
+            let recent = ModelViewer.shared.recent.filter { $0 != doc.url?.path }.prefix(6)
+            if !recent.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RECENT").font(.system(size: 10, weight: .bold, design: .monospaced)).tracking(2).foregroundStyle(Palette.ash).padding(.leading, 8).padding(.bottom, 4)
+                    ForEach(Array(recent), id: \.self) { path in RecentLine(path: path) { doc.load(URL(fileURLWithPath: path)) } }
+                }
+                .frame(width: 380, alignment: .leading).padding(.top, 14)
+            }
         }
     }
 
@@ -523,18 +624,30 @@ struct ModelViewerView: View {
                 .font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash).lineLimit(1)
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(Color.black.opacity(0.45))
+        .background(Color.black.opacity(plate))
     }
 
+    // two rows: how you look at it (views, lights, backdrop, recent files) over what you do to it
     var chips: some View {
-        HStack(spacing: 6) {
-            if doc.canDraw { ViewerChip(title: doc.pose == .drawn ? "Sheathe" : "Unsheath", key: "U", on: doc.pose == .drawn) { doc.toggleDrawn() } }
-            if doc.canExplode { ViewerChip(title: doc.explodeLabel, key: "E", on: doc.pose == .groups || doc.pose == .apart) { doc.explode() } }
-            ViewerChip(title: "Spin", key: "S", on: doc.spinning) { doc.spinning.toggle() }
-            ViewerChip(title: "Clay", key: "C", on: doc.clay) { doc.clay.toggle() }
-            ViewerChip(title: "Wire", key: "W", on: doc.wireframe) { doc.wireframe.toggle() }
-            ViewerChip(title: "Fit", key: "F", on: false) { doc.canvas.reframe() }
-            ViewerChip(title: "Parts", key: "P", on: doc.panel) { doc.panel.toggle() }
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 6) {
+                ViewerChip(title: doc.viewLabel("front"), key: "1", on: doc.viewOn("front"), plate: plate) { doc.look("front") }
+                ViewerChip(title: doc.viewLabel("side"), key: "2", on: doc.viewOn("side"), plate: plate) { doc.look("side") }
+                ViewerChip(title: doc.viewLabel("top"), key: "3", on: doc.viewOn("top"), plate: plate) { doc.look("top") }
+                ViewerChip(title: "Flat", key: "4", on: doc.flat, plate: plate) { doc.flat.toggle() }
+                ViewerChip(title: "Lights", key: "L", on: false, plate: plate) { doc.turnLight() }
+                ViewerChip(title: "Backdrop", key: "B", on: false, plate: plate) { doc.nextBackdrop() }
+                ViewerChip(title: "Recent", key: "R", on: false, plate: plate) { doc.showRecent() }
+            }
+            HStack(spacing: 6) {
+                if doc.canDraw { ViewerChip(title: doc.pose == .drawn ? "Sheathe" : "Unsheath", key: "U", on: doc.pose == .drawn, plate: plate) { doc.toggleDrawn() } }
+                if doc.canExplode { ViewerChip(title: doc.explodeLabel, key: "E", on: doc.pose == .groups || doc.pose == .apart, plate: plate) { doc.explode() } }
+                ViewerChip(title: "Spin", key: "S", on: doc.spinning, plate: plate) { doc.spinning.toggle() }
+                ViewerChip(title: "Clay", key: "C", on: doc.clay, plate: plate) { doc.clay.toggle() }
+                ViewerChip(title: "Wire", key: "W", on: doc.wireframe, plate: plate) { doc.wireframe.toggle() }
+                ViewerChip(title: "Fit", key: "F", on: false, plate: plate) { doc.canvas.reframe() }
+                ViewerChip(title: "Parts", key: "P", on: doc.panel, plate: plate) { doc.panel.toggle() }
+            }
         }
     }
 
@@ -551,7 +664,7 @@ struct ModelViewerView: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(Color.black.opacity(0.45))
+        .background(Color.black.opacity(plate))
         .frame(maxWidth: 640)
         .frame(maxWidth: .infinity)
     }
@@ -636,6 +749,7 @@ struct ViewerChip: View {
     let title: String
     let key: String
     let on: Bool
+    var plate = 0.45
     let action: () -> Void
     @ObservedObject var theme = Theme.shared
     var body: some View {
@@ -646,10 +760,29 @@ struct ViewerChip: View {
             }
             .fixedSize()
             .padding(.horizontal, 8).padding(.vertical, 5)
-            .background(on ? theme.accent : Color.black.opacity(0.45))
+            .background(on ? theme.accent : Color.black.opacity(plate))
             .overlay(Rectangle().stroke(on ? theme.accent : Palette.ash.opacity(0.5)))
             .contentShape(Rectangle())
         }.buttonStyle(.plain)
+    }
+}
+
+// one recent file in the empty window: its name, then the folder it's in
+struct RecentLine: View {
+    let path: String
+    let action: () -> Void
+    @State private var over = false
+    var body: some View {
+        HStack(spacing: 10) {
+            Text((path as NSString).lastPathComponent).font(.system(size: 12, design: .monospaced)).foregroundStyle(Palette.bone).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+            Text((((path as NSString).deletingLastPathComponent) as NSString).abbreviatingWithTildeInPath).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash).lineLimit(1).truncationMode(.head)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(Color.white.opacity(over ? 0.07 : 0))
+        .contentShape(Rectangle())
+        .onHover { over = $0 }
+        .onTapGesture(perform: action)
     }
 }
 

@@ -4,6 +4,7 @@ import SceneKit
 // SceneKit view (Metal) with its own turntable camera: nothing draws unless the camera or the model changes.
 final class ModelCanvas: SCNView, SCNSceneRendererDelegate {
     private let rig = SCNNode()
+    private weak var stage: SCNNode?
     private let lens = SCNCamera()
     private let fov: Float = 32
 
@@ -16,6 +17,11 @@ final class ModelCanvas: SCNView, SCNSceneRendererDelegate {
     private(set) var pitch: Float = -0.3
     private var timers: [String: Timer] = [:]
     private var fitted = false                   // still framed on the whole model, so a resized view re-frames it
+    private(set) var flat = false                // no perspective: far parts draw the same size as near ones
+    private(set) var lightTurn: Float = 0        // how far the studio lights are turned round the model
+    private(set) var backdrop = Backdrop.dark
+    private(set) var view: String?               // "front" "back" "right" "left" "top" "bottom" while looking exactly from there
+    var onView: ((String?) -> Void)?
 
     var onClick: ((CGPoint) -> Void)?
     var onDoubleClick: ((CGPoint) -> Void)?
@@ -57,10 +63,12 @@ final class ModelCanvas: SCNView, SCNSceneRendererDelegate {
     func show(_ model: LoadedModel, intro: Bool, keepView: Bool = false) {
         stopAll()
         rig.removeFromParentNode()
-        model.scene.rootNode.addChildNode(rig)
+        model.stage.addChildNode(rig)
+        stage = model.stage
+        model.stage.simdOrientation = simd_quatf(angle: lightTurn, axis: [0, 1, 0])
         model.scene.lightingEnvironment.contents = Studio.environment
         model.scene.lightingEnvironment.intensity = 1.15
-        model.scene.background.contents = Studio.backdrop
+        model.scene.background.contents = backdrop.picture
         scene = model.scene
         pointOfView = rig
         sceneTime = 0
@@ -135,7 +143,9 @@ final class ModelCanvas: SCNView, SCNSceneRendererDelegate {
         var need: Float = 0
         for corner in corners {
             let p = back.act(corner - middle)
-            need = max(need, abs(p.x) / across + p.z, abs(p.y) / up + p.z)
+            // with perspective a corner nearer the camera needs more room; flat, depth doesn't count
+            let near = flat ? 0 : p.z
+            need = max(need, abs(p.x) / across + near, abs(p.y) / up + near)
         }
         return max(need, radius * 0.05) * 1.06
     }
@@ -164,23 +174,90 @@ final class ModelCanvas: SCNView, SCNSceneRendererDelegate {
 
     // what's under a point of the view: the mesh and the exact spot on it
     func pick(_ point: CGPoint) -> (node: SCNNode, spot: SIMD3<Float>)? {
-        hitTest(point, options: [.searchMode: SCNHitTestSearchMode.closest.rawValue, .ignoreHiddenNodes: true]).first.map { ($0.node, $0.simdWorldCoordinates) }
+        // the spot is measured on the stage, by way of the mesh itself (the hit's room position can lag a frame behind a light turn)
+        hitTest(point, options: [.searchMode: SCNHitTestSearchMode.closest.rawValue, .ignoreHiddenNodes: true]).first.map { ($0.node, stage?.simdConvertPosition($0.simdLocalCoordinates, from: $0.node) ?? $0.simdWorldCoordinates) }
     }
 
     func picture() -> NSImage { snapshot() }
 
     private func apply() {
-        pitch = min(max(pitch, -1.55), 1.55)
+        pitch = min(max(pitch, -.pi / 2), .pi / 2)
         distance = min(max(distance, radius * 0.02), radius * 60)
         // the model can't be pushed out of reach
         let away = target - center
         if simd_length(away) > radius * 1.5 { target = center + simd_normalize(away) * radius * 1.5 }
         let turn = turnNow
-        rig.simdOrientation = turn
-        rig.simdPosition = target + turn.act([0, 0, distance])
         let reach = simd_length(target - center) + radius
-        lens.zNear = Double(max(distance - reach, distance * 0.02, radius * 0.002))
-        lens.zFar = Double(distance + reach * 2)
+        rig.simdOrientation = turn
+        if flat {
+            // "distance" still sets the size, so zoom, pan and fit work the same; the camera itself stands outside the model
+            let back = max(distance, reach * 1.5)
+            rig.simdPosition = target + turn.act([0, 0, back])
+            lens.orthographicScale = Double(distance * tan(fov * .pi / 360))
+            lens.zNear = Double(max(back - reach * 1.25, radius * 0.002))
+            lens.zFar = Double(back + reach * 2)
+        } else {
+            rig.simdPosition = target + turn.act([0, 0, distance])
+            lens.zNear = Double(max(distance - reach, distance * 0.02, radius * 0.002))
+            lens.zFar = Double(distance + reach * 2)
+        }
+        let now = named
+        if now != view { view = now; onView?(now) }
+    }
+
+    // MARK: straight-on views, flat mode, lights, backdrop
+
+    private static let views: [String: (yaw: Float, pitch: Float)] = ["front": (0, 0), "back": (.pi, 0), "right": (.pi / 2, 0), "left": (-.pi / 2, 0), "top": (0, -.pi / 2), "bottom": (0, .pi / 2)]
+
+    private var named: String? {
+        if pitch <= -.pi / 2 + 0.002 { return "top" }
+        if pitch >= .pi / 2 - 0.002 { return "bottom" }
+        guard abs(pitch) < 0.002 else { return nil }
+        return ["front", "back", "right", "left"].first { abs((yaw - Self.views[$0]!.yaw).remainder(dividingBy: 2 * .pi)) < 0.002 }
+    }
+
+    // swing round to look straight at one side, the short way; keeps your zoom unless you were framed on the whole model
+    func look(_ name: String, animated: Bool = true) {
+        guard let to = Self.views[name] else { return }
+        stop("camera")
+        let fromYaw = yaw, fromPitch = pitch, fromDistance = distance, refit = fitted
+        let swing = (to.yaw - fromYaw).remainder(dividingBy: 2 * .pi)
+        guard animated, onScreen else { yaw = to.yaw; pitch = to.pitch; if refit { distance = fitDistance }; apply(); return }
+        run("camera", seconds: 0.35) { [weak self] t in
+            guard let self else { return }
+            let ease = 1 - pow(1 - t, 3)
+            self.yaw = t >= 1 ? to.yaw : fromYaw + swing * ease
+            self.pitch = t >= 1 ? to.pitch : fromPitch + (to.pitch - fromPitch) * ease
+            if refit { self.distance = fromDistance + (self.fitDistance - fromDistance) * ease }
+            self.apply()
+        }
+    }
+
+    // what sits where the camera turns keeps its size on screen, so switching doesn't jump
+    func setFlat(_ on: Bool) {
+        guard on != flat else { return }
+        flat = on
+        lens.usesOrthographicProjection = on
+        apply()
+        if fitted { reframe(seconds: 0.25) }
+    }
+
+    // The lights themselves can't be turned cheaply (SceneKit ignores a transform on the lighting picture and takes
+    // ~100 ms to swallow a new one), so the model and the camera turn together under them instead: same picture, free.
+    // Every position the viewer works with is measured on that stage, not in the room.
+    func turnLight(by angle: Float) {
+        lightTurn = (lightTurn + angle).remainder(dividingBy: 2 * .pi)
+        stage?.simdOrientation = simd_quatf(angle: lightTurn, axis: [0, 1, 0])
+        needsDisplay = true
+    }
+
+    // a spot on the stage → where that is in the room (for placing parts)
+    func room(_ spot: SIMD3<Float>) -> SIMD3<Float> { stage?.simdConvertPosition(spot, to: nil) ?? spot }
+
+    func setBackdrop(_ kind: Backdrop) {
+        backdrop = kind
+        scene?.background.contents = kind.picture
+        needsDisplay = true
     }
 
     func turn(dx: Float, dy: Float) {
@@ -263,7 +340,9 @@ final class ModelCanvas: SCNView, SCNSceneRendererDelegate {
         let here = convert(e.locationInWindow, from: nil)
         if !dragged, hypot(here.x - pressed.x, here.y - pressed.y) < 3 { return }
         dragged = true
-        if e.modifierFlags.contains(.shift) || e.modifierFlags.contains(.option) { pan(dx: Float(e.deltaX), dy: Float(e.deltaY)) } else { turn(dx: Float(e.deltaX), dy: Float(e.deltaY)) }
+        if e.modifierFlags.contains(.option) { turnLight(by: Float(e.deltaX) * 0.01) }
+        else if e.modifierFlags.contains(.shift) { pan(dx: Float(e.deltaX), dy: Float(e.deltaY)) }
+        else { turn(dx: Float(e.deltaX), dy: Float(e.deltaY)) }
     }
     override func rightMouseDown(with e: NSEvent) { window?.makeFirstResponder(self) }
     override func rightMouseDragged(with e: NSEvent) { pan(dx: Float(e.deltaX), dy: Float(e.deltaY)) }
