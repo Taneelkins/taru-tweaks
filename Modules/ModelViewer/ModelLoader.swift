@@ -2,28 +2,80 @@ import AppKit
 import SceneKit
 import GLTFKit2
 
+// one mesh of the model, as it sits when the file opens
+struct ModelPart {
+    let node: SCNNode
+    let name: String
+    let home: SIMD3<Float>      // world position at rest
+    let low: SIMD3<Float>       // world box at rest
+    let high: SIMD3<Float>
+    let sheath: Bool            // named like a sheath (or sits in a group named like one)
+    let path: [String]          // names of the groups it sits in, nearest first
+    var branch: ObjectIdentifier // the top group it belongs to, below any wrapper every part shares
+    let triangles: Int
+    let materials: Int
+}
+
+// one animation in the file: everything it moves, on the view's own clock so it can be paused and scrubbed
+final class ModelClip {
+    let name: String
+    let duration: Double
+    private let players: [(node: SCNNode, key: String, player: SCNAnimationPlayer)]
+
+    init(name: String, players: [(node: SCNNode, key: String, player: SCNAnimationPlayer)]) {
+        self.name = name
+        self.players = players
+        duration = players.map { $0.player.animation.duration }.max() ?? 0
+    }
+
+    func attach() { for p in players { p.node.addAnimationPlayer(p.player, forKey: p.key); p.player.play() } }
+    func detach() { for p in players { p.node.removeAnimation(forKey: p.key) } }
+
+    static func player(_ animation: SCNAnimation) -> SCNAnimationPlayer {
+        animation.usesSceneTimeBase = true
+        animation.repeatCount = .greatestFiniteMagnitude
+        animation.isRemovedOnCompletion = false
+        return SCNAnimationPlayer(animation: animation)
+    }
+}
+
 struct LoadedModel {
     let scene: SCNScene
     let content: SCNNode
     let low: SIMD3<Float>
     let high: SIMD3<Float>
     let triangles: Int
-    let parts: Int
     let cutouts: Int
+    let parts: [ModelPart]
+    let clips: [ModelClip]
+    let setup: ModelSetup?
+    let materials: Int
+    let textures: Int
+    let largestTexture: Int     // longest side in pixels, 0 when unknown
 }
 
 enum ModelLoader {
     static let types: Set<String> = ["usdz", "usd", "usda", "usdc", "obj", "glb", "gltf"]
+    static let sheathNames = ["saya", "sheath", "scabbard", "sageo", "holster"]
 
     struct Failure: LocalizedError { let errorDescription: String? }
 
     // runs off the main thread; everything here is plain data until the view takes the scene
     static func load(_ url: URL) throws -> LoadedModel {
         let ext = url.pathExtension.lowercased()
+        let gltf = ext == "glb" || ext == "gltf"
         let source: SCNScene
-        if ext == "glb" || ext == "gltf" {
+        var named: [(String, SCNAnimation)] = []
+        var images: Int?
+        if gltf {
             // GLTFKit2 (MIT) builds the SceneKit scene; it already turns MASK materials into cutouts
-            source = SCNScene(gltfAsset: try GLTFAsset(url: url, options: [:]))
+            let asset = try GLTFAsset(url: url, options: [:])
+            let reader = GLTFSCNSceneSource(asset: asset)
+            guard let scene = reader.defaultScene ?? reader.scenes.first else { throw Failure(errorDescription: "No scene in this file") }
+            source = scene
+            // SceneKit splits one glTF image into several textures, so count the file's own images
+            images = asset.images.count
+            named = reader.animations.map { ($0.name, $0.animationPlayer.animation) }
         } else {
             source = try SCNScene(url: url, options: [.checkConsistency: false])
         }
@@ -36,25 +88,82 @@ enum ModelLoader {
         if let up = source.attribute(forKey: SCNScene.Attribute.upAxis.rawValue) as? SCNVector3, up.z > 0.5 { content.eulerAngles.x = -.pi / 2 }
         scene.rootNode.addChildNode(content)
 
-        var triangles = 0, parts = 0, cutouts = 0
+        var triangles = 0, cutouts = 0
+        var parts: [ModelPart] = []
+        var chains: [[SCNNode]] = []
+        var materials = Set<ObjectIdentifier>(), pictures = Set<String>(), largest = 0
+        var moving: [(node: SCNNode, key: String, player: SCNAnimationPlayer)] = []
         var low = SIMD3<Float>(repeating: .greatestFiniteMagnitude), high = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var seen = Set<ObjectIdentifier>()
         content.enumerateHierarchy { node, _ in
             node.light = nil; node.camera = nil
+            // USD files arrive with their animation already running; take it over
+            for key in node.animationKeys {
+                if let player = node.animationPlayer(forKey: key) { moving.append((node, key, ModelClip.player(player.animation))) }
+                node.removeAnimation(forKey: key)
+            }
             guard let geometry = node.geometry else { return }
-            parts += 1
-            for element in geometry.elements { triangles += count(element) }
+            let own = geometry.elements.reduce(0) { $0 + count($1) }
+            triangles += own
+            for material in geometry.materials where materials.insert(ObjectIdentifier(material)).inserted {
+                for slot in [material.diffuse, material.normal, material.metalness, material.roughness, material.emission, material.ambientOcclusion] {
+                    guard let (key, side) = picture(slot.contents) else { continue }
+                    if pictures.insert(key).inserted { largest = max(largest, side) }
+                }
+            }
             let (a, b) = geometry.boundingBox
+            var partLow = SIMD3<Float>(repeating: .greatestFiniteMagnitude), partHigh = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
             for x in [a.x, b.x] { for y in [a.y, b.y] { for z in [a.z, b.z] {
                 let p = node.simdConvertPosition(SIMD3(Float(x), Float(y), Float(z)), to: nil)
-                low = simd_min(low, p); high = simd_max(high, p)
+                partLow = simd_min(partLow, p); partHigh = simd_max(partHigh, p)
             } } }
-            if ext != "glb" && ext != "gltf" {
+            low = simd_min(low, partLow); high = simd_max(high, partHigh)
+            var chain: [SCNNode] = [], walk: SCNNode? = node
+            while let n = walk, n !== content { chain.insert(n, at: 0); walk = n.parent }
+            let names = chain.map { $0.name ?? "" }
+            let sheath = names.contains { name in sheathNames.contains { name.lowercased().contains($0) } }
+            chains.append(chain)
+            parts.append(ModelPart(node: node, name: node.name ?? "Part \(parts.count + 1)", home: node.simdWorldPosition, low: partLow, high: partHigh, sheath: sheath,
+                                   path: names.dropLast().reversed(), branch: ObjectIdentifier(node), triangles: own, materials: geometry.materials.count))
+            if !gltf {
                 for material in geometry.materials where seen.insert(ObjectIdentifier(material)).inserted { if cutout(material, usdz: url) { cutouts += 1 } }
             }
         }
-        guard parts > 0, low.x <= high.x else { throw Failure(errorDescription: "No meshes in this file") }
-        return LoadedModel(scene: scene, content: content, low: low, high: high, triangles: triangles, parts: parts, cutouts: cutouts)
+        guard !parts.isEmpty, low.x <= high.x else { throw Failure(errorDescription: "No meshes in this file") }
+        // skip the wrappers every part sits in ("root", "Scene"), then the next group down is the part's branch
+        var shared = 0
+        while let first = chains.first, shared < first.count - 1, chains.allSatisfy({ $0.count > shared + 1 && $0[shared] === first[shared] }) { shared += 1 }
+        for i in parts.indices { parts[i].branch = ObjectIdentifier(chains[i][min(shared, chains[i].count - 1)]) }
+        var clips = named.enumerated().map { i, pair in ModelClip(name: pair.0.isEmpty ? "Clip \(i + 1)" : pair.0, players: [(content, "clip", ModelClip.player(pair.1))]) }
+        if !moving.isEmpty { clips.append(ModelClip(name: "Animation", players: moving)) }
+        return LoadedModel(scene: scene, content: content, low: low, high: high, triangles: triangles, cutouts: cutouts, parts: parts, clips: clips.filter { $0.duration > 0 },
+                           setup: ModelSetup.load(for: url), materials: materials.count, textures: images ?? pictures.count, largestTexture: largest)
+    }
+
+    // a texture's identity and its longest side, without decoding it
+    static func picture(_ contents: Any?) -> (String, Int)? {
+        guard let contents, !(contents is NSNumber), !(contents is NSColor) else { return nil }
+        if let texture = contents as? MTLTexture { return ("\(ObjectIdentifier(texture as AnyObject))", max(texture.width, texture.height)) }
+        if let image = contents as? NSImage { return ("\(ObjectIdentifier(image))", image.representations.map { max($0.pixelsWide, $0.pixelsHigh) }.max() ?? 0) }
+        if CFGetTypeID(contents as CFTypeRef) == CGImage.typeID { let image = contents as! CGImage; return ("\(ObjectIdentifier(image))", max(image.width, image.height)) }
+        let url = (contents as? URL) ?? (contents as? String).map { URL(fileURLWithPath: $0) }
+        guard let url else { return ("\(ObjectIdentifier(contents as AnyObject))", 0) }
+        var side = 0
+        if let data = bytes(url), let source = CGImageSourceCreateWithData(data as CFData, nil), let info = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
+            side = max(info[kCGImagePropertyPixelWidth] as? Int ?? 0, info[kCGImagePropertyPixelHeight] as? Int ?? 0)
+        }
+        return (url.absoluteString, side)
+    }
+
+    // textures inside a .usdz come back as "<file>.usdz?offset=…&size=…"
+    static func bytes(_ url: URL) -> Data? {
+        if let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), let offset = parts.queryItems?.first(where: { $0.name == "offset" })?.value.flatMap(UInt64.init),
+           let size = parts.queryItems?.first(where: { $0.name == "size" })?.value.flatMap(Int.init), let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: url.path)) {
+            defer { try? handle.close() }
+            try? handle.seek(toOffset: offset)
+            return try? handle.read(upToCount: size)
+        }
+        return try? Data(contentsOf: url)
     }
 
     static func count(_ e: SCNGeometryElement) -> Int {
@@ -98,14 +207,7 @@ enum ModelLoader {
             if let c = contents, CFGetTypeID(c as CFTypeRef) == CGImage.typeID { return (c as! CGImage) }
             return nil
         }
-        var data: Data?
-        // textures inside a .usdz come back as "<file>.usdz?offset=…&size=…"
-        if let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), let offset = parts.queryItems?.first(where: { $0.name == "offset" })?.value.flatMap(UInt64.init),
-           let size = parts.queryItems?.first(where: { $0.name == "size" })?.value.flatMap(Int.init), let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: url.path)) {
-            try? handle.seek(toOffset: offset); data = try? handle.read(upToCount: size); try? handle.close()
-        } else {
-            data = try? Data(contentsOf: url)
-        }
+        let data = bytes(url)
         guard let data, let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         return CGImageSourceCreateThumbnailAtIndex(src, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 512] as CFDictionary)
     }

@@ -13,7 +13,9 @@ final class ModelViewer {
 
     func start() {
         // object: "dump" | "open <path>" (no focus steal, lands on the extra display if there is one) | "new" (empty window, same way) | "close"
-        //         | "snap <png path>" | "bench" | "wire" | "frame" | "turn <dx> <dy>" | "pan <dx> <dy>" | "zoom <factor> [x y]"  → /tmp/tarutweaks-model.json
+        //         | "snap <png path>" | "bench" | "wire" | "frame" | "turn <dx> <dy>" | "pan <dx> <dy>" | "zoom <factor> [x y]"
+        //         | "explode" (next step) | "draw" | "spin" | "play" | "seek <seconds>" | "clip" (next one) | "clay" | "panel"
+        //         | "select <n>" | "hide <n>" | "solo <n>" | "showall" | "copy" | "reload"  → /tmp/tarutweaks-model.json
         DistributedNotificationCenter.default().addObserver(forName: .init("com.taru.tweaks.model"), object: nil, queue: .main) { [weak self] n in self?.debug(n.object as? String ?? "dump") }
     }
 
@@ -36,7 +38,7 @@ final class ModelViewer {
             docs.append(doc)
             doc.closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: doc.window, queue: .main) { [weak self, weak doc] _ in
                 if let token = doc?.closing { NotificationCenter.default.removeObserver(token) }
-                doc?.canvas.clear()
+                doc?.shutDown()
                 self?.docs.removeAll { $0 === doc }
                 DispatchQueue.main.async { AppDelegate.shared.updateDockIcon() }
             }
@@ -79,6 +81,20 @@ final class ModelViewer {
             if v.count == 2 { doc?.canvas.pan(dx: v[0], dy: v[1]) }
         case "close": docs.forEach { $0.window.close() }
         case "wire": doc?.wireframe.toggle()
+        case "explode": doc?.explode()
+        case "clay": doc?.clay.toggle()
+        case "panel": doc?.panel.toggle()
+        case "showall": doc?.showAll()
+        case "copy": doc?.copyPicture()
+        case "reload": doc?.reload()
+        case "select" where parts.count == 2: if let i = Int(parts[1]) { doc?.select(i, focus: true) }
+        case "hide" where parts.count == 2: if let i = Int(parts[1]) { doc?.toggleHidden(i) }
+        case "solo" where parts.count == 2: if let i = Int(parts[1]) { doc?.solo(i) }
+        case "draw": doc?.toggleDrawn()
+        case "spin": doc?.spinning.toggle()
+        case "play": doc?.playing.toggle()
+        case "clip": doc?.nextClip()
+        case "seek" where parts.count == 2: if let t = Double(parts[1]) { doc?.seek(t) }
         case "frame": doc?.canvas.reframe(animated: false)
         case "turn" where parts.count == 2:
             let v = parts[1].split(separator: " ").compactMap { Float($0) }
@@ -101,16 +117,48 @@ final class ModelViewer {
     }
 }
 
+struct PartRow: Identifiable {
+    let id: Int
+    let name: String
+    let triangles: Int
+    let materials: Int
+    let group: String
+    var hidden = false
+}
+
 final class ModelDoc: ObservableObject {
     @Published var url: URL?
     @Published var loading = false
     @Published var problem: String?
     @Published var triangles = 0
-    @Published var parts = 0
     @Published var bytes: Int64 = 0
+    @Published private(set) var rows: [PartRow] = []
+    @Published private(set) var facts: [String] = []
+    @Published private(set) var selected: Int?
+    @Published var hovered: Int? { didSet { if hovered != oldValue { mark() } } }
+    @Published var panel = UserDefaults.standard.object(forKey: "model.panel") as? Bool ?? true { didSet { UserDefaults.standard.set(panel, forKey: "model.panel") } }
+    @Published var byTriangles = false
     @Published var wireframe = false { didSet { canvas.wireframe = wireframe } }
+    @Published var clay = false { didSet { if clay != oldValue { applyClay() } } }
+    @Published var spinning = false { didSet { canvas.spinning = spinning } }
+    @Published private(set) var pose = ModelPoser.Pose.together
+    @Published private(set) var canExplode = false
+    @Published private(set) var canDraw = false
+    @Published private(set) var clips: [ModelClip] = []
+    @Published private(set) var clip = 0
+    @Published private(set) var time = 0.0
+    @Published var playing = false { didSet { if playing != oldValue { play(playing) } } }
+    @Published private(set) var toast: String?
     private(set) var cutouts = 0
     private(set) var loadSeconds = 0.0
+    private(set) var reloads = 0
+    private var model: LoadedModel?
+    private var poser: ModelPoser?
+    private var clock = 0.0
+    private var marks: [SCNNode] = []
+    private var dressed: [(SCNGeometry, [SCNMaterial])] = []
+    private var watch: DispatchSourceFileSystemObject?
+    private var settle: DispatchWorkItem?
 
     let canvas = ModelCanvas()
     let window: NSWindow
@@ -118,62 +166,296 @@ final class ModelDoc: ObservableObject {
     private var ticket = 0
 
     init(offset: Int) {
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 680), styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 720), styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden; window.isReleasedWhenClosed = false
         window.title = "Model Viewer"
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(red: 0.05, green: 0.05, blue: 0.06, alpha: 1)
-        window.minSize = NSSize(width: 420, height: 320)
+        window.minSize = NSSize(width: 640, height: 420)
         window.contentView = NSHostingView(rootView: ModelViewerView(doc: self))
         window.center()
         if !window.setFrameUsingName("ModelViewer") { window.center() }
         window.setFrameAutosaveName(offset == 0 ? "ModelViewer" : "")
         if offset > 0 { window.setFrameOrigin(NSPoint(x: window.frame.minX + CGFloat(offset % 8) * 28, y: window.frame.minY - CGFloat(offset % 8) * 28)) }
-        canvas.onDoubleClick = { [weak self] in self?.canvas.reframe() }
+        canvas.onClick = { [weak self] point in self?.select(self?.part(at: point)?.index, focus: false) }
+        // double-click a spot to zoom in on it, double-click empty space to see everything again
+        canvas.onDoubleClick = { [weak self] point in
+            guard let self else { return }
+            if let hit = self.part(at: point) { self.select(hit.index, focus: false); self.canvas.focus(on: hit.spot) } else { self.canvas.reframe() }
+        }
         canvas.onKey = { [weak self] key in
             guard let self else { return false }
             switch key {
             case "f": self.canvas.reframe()
             case "w": self.wireframe.toggle()
+            case "c": self.clay.toggle()
+            case "s": self.spinning.toggle()
+            case "p": self.panel.toggle()
+            case "e": self.explode()
+            case "u": self.toggleDrawn()
+            case "h": if let i = self.selected { self.toggleHidden(i) } else { return false }
+            case "i": if let i = self.selected { self.solo(i) } else { return false }
+            case "\u{1b}": if self.selected != nil { self.select(nil, focus: false) } else { self.showAll() }
+            case " ": if self.clips.isEmpty { return false }; self.playing.toggle()
             case "open": ModelViewer.shared.pick(into: self)
+            case "copy": self.copyPicture()
+            case "save": self.savePicture()
             default: return false
             }
             return true
         }
     }
 
-    func load(_ url: URL) {
+    // the window is closing: let go of the model, the file watch and the view (the view holds this object, so nothing frees itself)
+    func shutDown() {
+        ticket += 1
+        watch?.cancel(); watch = nil; settle?.cancel()
+        canvas.clear()
+        model = nil; poser = nil; marks = []; dressed = []; clips = []; rows = []
+        DispatchQueue.main.async { [window] in window.contentView = nil }
+    }
+
+    func load(_ url: URL, again: Bool = false) {
         ticket += 1
         let mine = ticket, started = Date()
-        self.url = url; loading = true; problem = nil
+        if !again { self.url = url; loading = true; problem = nil }
         window.title = url.lastPathComponent
         window.representedURL = url
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result { try ModelLoader.load(url) }
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+            // watch the file from here: this thread has just read it, so macOS has nothing left to ask
+            let descriptor = (try? result.get()) == nil ? -1 : open(url.path, O_EVTONLY)
             DispatchQueue.main.async {
-                guard mine == self.ticket else { return }
+                guard mine == self.ticket else { if descriptor >= 0 { close(descriptor) }; return }
+                // a re-export caught half-written: keep showing the old one and try once more
+                if again, case .failure = result {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { if mine == self.ticket { self.load(url) } }
+                    return
+                }
                 self.loading = false
+                self.playing = false; self.spinning = false
+                self.marks = []; self.dressed = []
+                self.clips = []; self.clip = 0; self.time = 0; self.clock = 0; self.pose = .together
+                self.selected = nil; self.hovered = nil
                 switch result {
                 case .success(let model):
-                    self.triangles = model.triangles; self.parts = model.parts; self.bytes = size; self.cutouts = model.cutouts
+                    self.model = model
+                    self.triangles = model.triangles; self.bytes = size; self.cutouts = model.cutouts
                     self.loadSeconds = Date().timeIntervalSince(started)
-                    self.canvas.show(model)
+                    let poser = ModelPoser(model.parts, setup: model.setup)
+                    self.poser = poser; self.canExplode = poser.canExplode; self.canDraw = poser.canDraw
+                    self.rows = model.parts.enumerated().map { PartRow(id: $0, name: $1.name, triangles: $1.triangles, materials: $1.materials, group: $1.path.first ?? "") }
+                    let box = model.high - model.low
+                    self.facts = ["\(model.materials) \(model.materials == 1 ? "material" : "materials") · \(model.textures) \(model.textures == 1 ? "texture" : "textures")" + (model.largestTexture > 0 ? " (largest \(model.largestTexture) px)" : ""),
+                                  "size " + [box.x, box.y, box.z].map { String(format: "%.2f", $0) }.joined(separator: " × "),
+                                  poser.hasGroups ? "\(poser.groupCount) groups" + (model.setup?.explode != nil ? " (from this model's setup)" : "") : ""].filter { !$0.isEmpty }
+                    self.clips = model.clips
+                    self.clips.first?.attach()
+                    self.canvas.show(model, intro: !again, keepView: again)
                     self.canvas.wireframe = self.wireframe
+                    if self.clay { self.applyClay() }
                     self.window.makeFirstResponder(self.canvas)
+                    // a file with animation starts moving, like it would in the game
+                    if !self.clips.isEmpty { self.playing = true }
+                    self.watchFile(descriptor, url)
+                    if again { self.reloads += 1; self.flash("Reloaded") }
                 case .failure(let error):
                     self.canvas.clear()
-                    self.triangles = 0; self.parts = 0; self.bytes = size
+                    self.model = nil; self.poser = nil; self.canExplode = false; self.canDraw = false
+                    self.triangles = 0; self.rows = []; self.facts = []; self.bytes = size
                     self.problem = error.localizedDescription
                 }
             }
         }
     }
 
+    // MARK: re-exports
+
+    // Blender saving over the file (or swapping a new one into its place) reloads it, keeping the view
+    private func watchFile(_ descriptor: Int32, _ url: URL) {
+        watch?.cancel(); watch = nil
+        guard descriptor >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .extend, .rename, .delete], queue: .main)
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.settle?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.reload() }
+            self.settle = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+        }
+        source.setCancelHandler { close(descriptor) }
+        source.resume()
+        watch = source
+    }
+
+    func reload() { if let url, problem == nil { load(url, again: true) } }
+
+    // MARK: parts
+
+    func part(at point: CGPoint) -> (index: Int, spot: SIMD3<Float>)? {
+        guard let model, let hit = canvas.pick(point) else { return nil }
+        var node: SCNNode? = hit.node
+        while let n = node {
+            if let index = model.parts.firstIndex(where: { $0.node === n }) { return (index, hit.spot) }
+            node = n.parent
+        }
+        return nil
+    }
+
+    func select(_ index: Int?, focus: Bool) {
+        selected = index.flatMap { rows.indices.contains($0) ? $0 : nil }
+        mark()
+        if focus, let i = selected, let poser, !rows[i].hidden { let box = poser.box(of: i); canvas.focus(low: box.low, high: box.high) }
+    }
+
+    // selected part gets a see-through outline of its triangles in the accent colour, the hovered one a faint one
+    private func mark() {
+        marks.forEach { $0.removeFromParentNode() }
+        marks = []
+        guard let model else { canvas.needsDisplay = true; return }
+        for (index, color) in [(hovered, NSColor(white: 1, alpha: 0.35)), (selected, NSColor(Theme.shared.accent))] {
+            guard let index, model.parts.indices.contains(index), let geometry = model.parts[index].node.geometry, model.parts[index].node.skinner == nil else { continue }
+            let lines = SCNMaterial()
+            lines.lightingModel = .constant
+            lines.diffuse.contents = color
+            lines.fillMode = .lines
+            lines.isDoubleSided = true
+            lines.readsFromDepthBuffer = false; lines.writesToDepthBuffer = false
+            let copy = geometry.copy() as! SCNGeometry
+            copy.materials = [lines]
+            let node = SCNNode(geometry: copy)
+            node.renderingOrder = 1000
+            model.parts[index].node.addChildNode(node)
+            marks.append(node)
+        }
+        canvas.needsDisplay = true
+    }
+
+    func toggleHidden(_ index: Int) {
+        guard let model, rows.indices.contains(index) else { return }
+        rows[index].hidden.toggle()
+        model.parts[index].node.isHidden = rows[index].hidden
+    }
+
+    // only this part (again = everything back)
+    func solo(_ index: Int) {
+        guard let model, rows.indices.contains(index) else { return }
+        let alone = rows.allSatisfy { $0.hidden == ($0.id != index) }
+        for i in rows.indices { rows[i].hidden = alone ? false : i != index; model.parts[i].node.isHidden = rows[i].hidden }
+    }
+
+    func showAll() {
+        guard let model else { return }
+        for i in rows.indices { rows[i].hidden = false; model.parts[i].node.isHidden = false }
+    }
+
+    var hiddenCount: Int { rows.filter(\.hidden).count }
+
+    // plain grey instead of textures, to judge the shape on its own
+    private func applyClay() {
+        guard let model else { return }
+        if clay {
+            let grey = SCNMaterial()
+            grey.lightingModel = .physicallyBased
+            grey.diffuse.contents = NSColor(white: 0.62, alpha: 1)
+            grey.roughness.contents = 0.6; grey.metalness.contents = 0.0
+            grey.isDoubleSided = true
+            for part in model.parts { if let g = part.node.geometry { dressed.append((g, g.materials)); g.materials = [grey] } }
+        } else {
+            for (geometry, materials) in dressed { geometry.materials = materials }
+            dressed = []
+        }
+        canvas.needsDisplay = true
+    }
+
+    // MARK: poses
+
+    // one press spaces the groups out, the next every single part, the next puts it back
+    func explode() {
+        guard let poser, poser.canExplode else { return }
+        poser.go(poser.next, on: canvas)
+        pose = poser.pose
+    }
+
+    func toggleDrawn() {
+        guard let poser, poser.canDraw else { return }
+        poser.go(poser.pose == .drawn ? .together : .drawn, on: canvas)
+        pose = poser.pose
+    }
+
+    var explodeLabel: String {
+        switch pose {
+        case .groups: return "Explode all"
+        case .apart: return "Assemble"
+        default: return "Explode"
+        }
+    }
+
+    // MARK: animation
+
+    var duration: Double { clips.indices.contains(clip) ? clips[clip].duration : 0 }
+
+    private func play(_ on: Bool) {
+        guard on, duration > 0 else { canvas.stop("play"); return }
+        canvas.loop("play") { [weak self] passed in
+            guard let self else { return }
+            self.show(self.clock + passed)
+        }
+    }
+
+    private func show(_ seconds: Double) {
+        guard duration > 0 else { return }
+        clock = seconds.truncatingRemainder(dividingBy: duration)
+        if clock < 0 { clock += duration }
+        canvas.sceneTime = clock
+        canvas.needsDisplay = true
+        // the bar doesn't need to redraw more than 30 times a second
+        if abs(clock - time) > 1.0 / 30 { time = clock }
+    }
+
+    func seek(_ seconds: Double) { show(min(max(seconds, 0), max(duration - 0.0001, 0))); time = clock }
+
+    func nextClip() {
+        guard clips.count > 1 else { return }
+        clips[clip].detach()
+        clip = (clip + 1) % clips.count
+        clips[clip].attach()
+        seek(0)
+    }
+
+    // MARK: pictures
+
+    private func png() -> Data? { canvas.picture().tiffRepresentation.flatMap { NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) } }
+
+    func copyPicture() {
+        guard model != nil, let data = png() else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setData(data, forType: .png)
+        flash("Picture copied")
+    }
+
+    func savePicture() {
+        guard model != nil, let url, let data = png() else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.nameFieldStringValue = url.deletingPathExtension().lastPathComponent + ".png"
+        guard panel.runModal() == .OK, let target = panel.url else { return }
+        do { try data.write(to: target); flash("Picture saved") } catch { flash("Couldn't save there") }
+    }
+
+    private func flash(_ text: String) {
+        toast = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in if self?.toast == text { self?.toast = nil } }
+    }
+
     func dump() -> [String: Any] {
-        ["file": url?.path ?? "", "loading": loading, "problem": problem ?? "", "triangles": triangles, "parts": parts, "cutoutMaterials": cutouts, "loadSeconds": loadSeconds,
+        ["file": url?.path ?? "", "loading": loading, "problem": problem ?? "", "triangles": triangles, "parts": rows.count, "cutoutMaterials": cutouts, "loadSeconds": loadSeconds,
          "metal": canvas.renderingAPI == .metal, "device": canvas.device?.name ?? "", "wireframe": wireframe, "windowNumber": window.windowNumber, "visible": window.isVisible,
-         "frame": NSStringFromRect(window.frame), "screen": window.screen?.localizedName ?? "", "distance": canvas.distance, "yaw": canvas.yaw, "pitch": canvas.pitch]
+         "frame": NSStringFromRect(window.frame), "screen": window.screen?.localizedName ?? "", "distance": canvas.distance, "yaw": canvas.yaw, "pitch": canvas.pitch,
+         "pose": pose.rawValue, "canExplode": canExplode, "canDraw": canDraw, "spinning": spinning, "clips": clips.map { "\($0.name) \(String(format: "%.2f", $0.duration))s" },
+         "clip": clip, "playing": playing, "time": clock, "facts": facts, "selected": selected ?? -1, "hidden": hiddenCount, "clay": clay, "panel": panel,
+         "watching": watch != nil, "reloads": reloads, "toast": toast ?? "", "rows": rows.prefix(8).map { "\($0.name) \($0.triangles)" }]
     }
 }
 
@@ -182,15 +464,38 @@ struct ModelViewerView: View {
     @ObservedObject var theme = Theme.shared
     @State private var dropping = false
 
+    private var showing: Bool { doc.url != nil && doc.problem == nil && !doc.loading }
+
     var body: some View {
-        ZStack {
-            CanvasHost(canvas: doc.canvas)
-            if doc.url == nil || doc.problem != nil { empty }
-            if doc.loading { Text("LOADING").font(.system(size: 11, weight: .bold, design: .monospaced)).tracking(3).foregroundStyle(Palette.ash).allowsHitTesting(false) }
-            VStack { Spacer(); HStack(alignment: .bottom) { info; Spacer(); hints } }.padding(14).allowsHitTesting(false)
-            if dropping { Rectangle().stroke(theme.accent, lineWidth: 3).allowsHitTesting(false) }
+        // the parts panel sits beside the 3D view, never over the model
+        HStack(spacing: 0) {
+            ZStack {
+                CanvasHost(canvas: doc.canvas)
+                if doc.url == nil || doc.problem != nil { empty }
+                if doc.loading { Text("LOADING").font(.system(size: 11, weight: .bold, design: .monospaced)).tracking(3).foregroundStyle(Palette.ash).allowsHitTesting(false) }
+                if showing {
+                    VStack(alignment: .trailing, spacing: 10) {
+                        Text("drag turn · scroll or pinch zoom · ⇧ drag pan · click select · double-click zoom in")
+                            .font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.ash.opacity(0.7)).lineLimit(1).allowsHitTesting(false)
+                        if let toast = doc.toast {
+                            Text(toast.uppercased()).font(.system(size: 10, weight: .bold, design: .monospaced)).tracking(1.5).foregroundStyle(Palette.pit)
+                                .padding(.horizontal, 10).padding(.vertical, 5).background(theme.accent).allowsHitTesting(false)
+                        }
+                        Spacer(minLength: 0)
+                        if !doc.clips.isEmpty { player }
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .bottom, spacing: 12) { info.allowsHitTesting(false); Spacer(minLength: 0); chips }
+                            VStack(alignment: .trailing, spacing: 8) { chips; HStack { info.allowsHitTesting(false); Spacer(minLength: 0) } }
+                            VStack(alignment: .leading, spacing: 8) { ScrollView(.horizontal, showsIndicators: false) { chips }; info.allowsHitTesting(false) }
+                        }
+                    }
+                    .padding(14)
+                }
+                if dropping { Rectangle().stroke(theme.accent, lineWidth: 3).allowsHitTesting(false) }
+            }
+            if showing, doc.panel { PartsPanel(doc: doc) }
         }
-        .frame(minWidth: 420, minHeight: 320)
+        .frame(minWidth: 640, minHeight: 420)
         .ignoresSafeArea()
         .onDrop(of: [.fileURL], isTargeted: $dropping) { providers in
             guard let provider = providers.first else { return false }
@@ -211,23 +516,140 @@ struct ModelViewerView: View {
         }
     }
 
-    @ViewBuilder var info: some View {
-        if let url = doc.url, doc.problem == nil, !doc.loading {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(url.lastPathComponent).font(.system(size: 13, weight: .semibold, design: .monospaced)).foregroundStyle(Palette.bone).lineLimit(1).truncationMode(.middle)
-                Text("\(doc.triangles.formatted()) triangles · \(doc.parts) \(doc.parts == 1 ? "part" : "parts") · \(ByteCountFormatter.string(fromByteCount: doc.bytes, countStyle: .file))\(doc.wireframe ? " · wireframe" : "")")
-                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(Color.black.opacity(0.45))
+    var info: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(doc.url?.lastPathComponent ?? "").font(.system(size: 13, weight: .semibold, design: .monospaced)).foregroundStyle(Palette.bone).lineLimit(1).truncationMode(.middle)
+            Text("\(doc.triangles.formatted()) triangles · \(doc.rows.count) \(doc.rows.count == 1 ? "part" : "parts") · \(ByteCountFormatter.string(fromByteCount: doc.bytes, countStyle: .file))")
+                .font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash).lineLimit(1)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(Color.black.opacity(0.45))
+    }
+
+    var chips: some View {
+        HStack(spacing: 6) {
+            if doc.canDraw { ViewerChip(title: doc.pose == .drawn ? "Sheathe" : "Unsheath", key: "U", on: doc.pose == .drawn) { doc.toggleDrawn() } }
+            if doc.canExplode { ViewerChip(title: doc.explodeLabel, key: "E", on: doc.pose == .groups || doc.pose == .apart) { doc.explode() } }
+            ViewerChip(title: "Spin", key: "S", on: doc.spinning) { doc.spinning.toggle() }
+            ViewerChip(title: "Clay", key: "C", on: doc.clay) { doc.clay.toggle() }
+            ViewerChip(title: "Wire", key: "W", on: doc.wireframe) { doc.wireframe.toggle() }
+            ViewerChip(title: "Fit", key: "F", on: false) { doc.canvas.reframe() }
+            ViewerChip(title: "Parts", key: "P", on: doc.panel) { doc.panel.toggle() }
         }
     }
 
-    @ViewBuilder var hints: some View {
-        if doc.url != nil, doc.problem == nil {
-            Text("drag turn · scroll or pinch zoom · ⇧ drag pan · double-click fit · W wireframe · ⌘O open")
-                .font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.ash.opacity(0.75)).lineLimit(1)
+    var player: some View {
+        HStack(spacing: 10) {
+            Button { doc.playing.toggle() } label: {
+                Image(systemName: doc.playing ? "pause.fill" : "play.fill").font(.system(size: 12)).foregroundStyle(theme.accent).frame(width: 26, height: 22).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            Slider(value: Binding(get: { doc.time }, set: { doc.playing = false; doc.seek($0) }), in: 0...max(doc.duration, 0.01))
+                .controlSize(.small).tint(theme.accent).focusable(false)
+            Text("\(String(format: "%.2f", doc.time)) / \(String(format: "%.2f", doc.duration)) s").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash).fixedSize()
+            if doc.clips.indices.contains(doc.clip) {
+                ViewerChip(title: doc.clips[doc.clip].name, key: doc.clips.count > 1 ? "\(doc.clip + 1)/\(doc.clips.count)" : "", on: false) { doc.nextClip() }
+            }
         }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Color.black.opacity(0.45))
+        .frame(maxWidth: 640)
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// every part with its triangle count: hover to outline it, click to zoom in on it, eye to hide it
+struct PartsPanel: View {
+    @ObservedObject var doc: ModelDoc
+    @ObservedObject var theme = Theme.shared
+
+    private var rows: [PartRow] { doc.byTriangles ? doc.rows.sorted { $0.triangles > $1.triangles } : doc.rows.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } }
+    private var heaviest: Int { max(doc.rows.map(\.triangles).max() ?? 1, 1) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                label("Model")
+                Text("\(doc.triangles.formatted()) triangles · \(doc.rows.count) \(doc.rows.count == 1 ? "part" : "parts")").font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.bone)
+                ForEach(doc.facts, id: \.self) { Text($0).font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash).fixedSize(horizontal: false, vertical: true) }
+            }
+            .padding(.horizontal, 12).padding(.top, 34).padding(.bottom, 10)
+            Rectangle().fill(Palette.rule).frame(height: 1)
+            HStack(spacing: 6) {
+                label("Parts")
+                Spacer()
+                if doc.hiddenCount > 0 { ViewerChip(title: "Show all", key: "", on: false) { doc.showAll() } }
+                ViewerChip(title: doc.byTriangles ? "Heaviest" : "A–Z", key: "", on: false) { doc.byTriangles.toggle() }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            ScrollView {
+                LazyVStack(spacing: 1) { ForEach(rows) { row in line(row) } }.padding(.bottom, 8)
+            }
+            if let i = doc.selected, doc.rows.indices.contains(i) {
+                Rectangle().fill(Palette.rule).frame(height: 1)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(doc.rows[i].name).font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundStyle(theme.accent).lineLimit(1).truncationMode(.middle)
+                    Text("\(doc.rows[i].triangles.formatted()) triangles · \(Int((Double(doc.rows[i].triangles) / Double(max(doc.triangles, 1)) * 100).rounded()))% of the model").font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.bone)
+                    Text("\(doc.rows[i].materials) \(doc.rows[i].materials == 1 ? "material" : "materials")\(doc.rows[i].group.isEmpty ? "" : " · in \(doc.rows[i].group)")").font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash).lineLimit(1)
+                    HStack(spacing: 6) {
+                        ViewerChip(title: doc.rows[i].hidden ? "Show" : "Hide", key: "H", on: doc.rows[i].hidden) { doc.toggleHidden(i) }
+                        ViewerChip(title: "Only this", key: "I", on: false) { doc.solo(i) }
+                    }.padding(.top, 3)
+                }
+                .padding(12)
+            }
+        }
+        .frame(width: 264)
+        .frame(maxHeight: .infinity)
+        .background(Color(red: 0.035, green: 0.035, blue: 0.04))
+        .overlay(alignment: .leading) { Rectangle().fill(Palette.rule).frame(width: 1) }
+        .onHover { if !$0 { doc.hovered = nil } }
+    }
+
+    func label(_ text: String) -> some View {
+        Text(text.uppercased()).font(.system(size: 10, weight: .bold, design: .monospaced)).tracking(2).foregroundStyle(Palette.ash)
+    }
+
+    func line(_ row: PartRow) -> some View {
+        let picked = doc.selected == row.id
+        return HStack(spacing: 8) {
+            Button { doc.toggleHidden(row.id) } label: {
+                Image(systemName: row.hidden ? "eye.slash" : "eye").font(.system(size: 10)).foregroundStyle(row.hidden ? Palette.ash.opacity(0.6) : Palette.ash).frame(width: 18, height: 18).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            Text(row.name).font(.system(size: 11, design: .monospaced)).fontWeight(picked ? .bold : .regular).foregroundStyle(row.hidden ? Palette.ash.opacity(0.6) : Palette.bone).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 4)
+            Text(row.triangles.formatted()).font(.system(size: 11, design: .monospaced)).foregroundStyle(picked ? Palette.bone : Palette.ash)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 4)
+        .overlay(alignment: .leading) { if picked { Rectangle().fill(theme.accent).frame(width: 3) } }
+        // the bar behind a row is its share of the heaviest part, so the expensive ones stand out
+        .background(alignment: .leading) {
+            GeometryReader { box in Rectangle().fill((picked ? theme.accent : Palette.bone).opacity(picked ? 0.3 : 0.07)).frame(width: box.size.width * CGFloat(row.triangles) / CGFloat(heaviest)) }
+        }
+        .contentShape(Rectangle())
+        .onHover { doc.hovered = $0 ? row.id : (doc.hovered == row.id ? nil : doc.hovered) }
+        .onTapGesture { doc.select(picked ? nil : row.id, focus: !picked) }
+    }
+}
+
+// small toggle in the viewer's corner; the dim letter is its key
+struct ViewerChip: View {
+    let title: String
+    let key: String
+    let on: Bool
+    let action: () -> Void
+    @ObservedObject var theme = Theme.shared
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(title.uppercased()).font(.system(size: 10, weight: .bold, design: .monospaced)).tracking(1).foregroundStyle(on ? Palette.pit : Palette.bone).lineLimit(1)
+                if !key.isEmpty { Text(key).font(.system(size: 9, design: .monospaced)).foregroundStyle(on ? Palette.pit.opacity(0.7) : Palette.ash) }
+            }
+            .fixedSize()
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(on ? theme.accent : Color.black.opacity(0.45))
+            .overlay(Rectangle().stroke(on ? theme.accent : Palette.ash.opacity(0.5)))
+            .contentShape(Rectangle())
+        }.buttonStyle(.plain)
     }
 }
 
