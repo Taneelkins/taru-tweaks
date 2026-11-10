@@ -29,6 +29,16 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.taru.tweaks.helper
         SWIFT_OBJC_BRIDGING_HEADER: Helper/smc.h
         SKIP_INSTALL: YES
+  TaruTweaksWatchdog:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Watchdog
+        excludes: ["*.plist"]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.taru.tweaks.watchdog
+        SKIP_INSTALL: YES
   TaruTweaks:
     type: application
     platform: macOS
@@ -44,8 +54,17 @@ targets:
           copyFiles:
             destination: wrapper
             subpath: Contents/Library/LaunchDaemons
+      - path: Watchdog/com.taru.tweaks.watchdog.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchAgents
     dependencies:
       - target: TaruTweaksHelper
+        embed: true
+        copy:
+          destination: executables
+      - target: TaruTweaksWatchdog
         embed: true
         copy:
           destination: executables

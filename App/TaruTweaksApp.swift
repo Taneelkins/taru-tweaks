@@ -85,12 +85,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Clipboard.shared.start()
         ScreenSwap.shared.start()
         Mixer.shared.start()
+        startWatchdog()
         ModelViewer.shared.start()
         updateDockIcon()
         for sig in [SIGTERM, SIGINT] {
             signal(sig, SIG_IGN)
             let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-            src.setEventHandler { Brightness.shared.stop(); Awake.shared.stop(); SkyLight.restoreNativeSwitcher(); exit(0) }
+            src.setEventHandler { AppDelegate.markCleanExit(); Brightness.shared.stop(); Awake.shared.stop(); SkyLight.restoreNativeSwitcher(); exit(0) }
             src.resume(); _ = Unmanaged.passRetained(src)
         }
         let event = NSAppleEventManager.shared().currentAppleEvent
@@ -185,7 +186,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool { openSettings(nil); return true }
-    func applicationWillTerminate(_ n: Notification) { SkyLight.restoreNativeSwitcher() }
+    func applicationWillTerminate(_ n: Notification) { AppDelegate.markCleanExit(); SkyLight.restoreNativeSwitcher() }
+
+    // the watchdog (Watchdog/main.swift) reopens the app when it ends without this marker, i.e. after a crash
+    static let cleanExitMarker = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TaruTweaks/clean-exit")
+    static func markCleanExit() { FileManager.default.createFile(atPath: cleanExitMarker.path, contents: nil) }
+
+    func startWatchdog() {
+        try? FileManager.default.removeItem(at: Self.cleanExitMarker)
+        let agent = SMAppService.agent(plistName: "com.taru.tweaks.watchdog.plist")
+        if agent.status != .enabled { do { try agent.register() } catch { NSLog("watchdog register: \(error)") } }
+    }
 
     func openSettings(_ page: String?) {
         if let page { nav.page = page }
