@@ -20,6 +20,7 @@ One app, one set of permissions, modules for:
 | **Live Wallpaper** | Muro | Video wallpaper played 24/7 by Taru Tweaks itself: desktop-level window on every Space/display (ordered under Übersicht widgets), AVPlayerLooper, pauses only when nothing can see it (occlusion, lock, display sleep). Sets a still frame as the system wallpaper for lock screen/Mission Control. Library + import in settings. |
 | **Battery** | AlDente Pro | Charge limit, sailing, discharge, auto-discharge, top up, heat protection, calibration, stop charging asleep, stay awake until limit, clamshell discharge, MagSafe LED, power modes, schedules + history, notifications, dashboard with Sankey power flow, Apple Shortcuts actions. Root helper uses the M5 SMC keys `CHTE` / `CHIE` / `ACLC`. |
 | **XDR Boost** | BrightIntosh | Up to 1000 nits everywhere, custom shortcuts, battery/heat cut-offs, timer, auto-on with charger, external XDR displays. |
+| **Model Viewer** | Quick Look / F3D for 3D files | Opens `.usdz` `.usd` `.obj` `.glb` `.gltf` from Finder's Open With, a drop on the window or the flame menu. SceneKit on Metal with its own turntable camera: drag turns, scroll or pinch zooms, ⇧-drag pans, double-click fits, W wireframe. Dark studio lighting, alpha-cutout materials cut cleanly, file name + triangle count in the corner. Draws only when something moves. |
 | **Task Manager** *(standalone app)* | Windows Task Manager | Processes grouped by app, CPU/memory, not-responding detection, End task / Force quit / process tree, live CPU/GPU/memory/network/disk graphs, startup items. ⌃⇧Esc. |
 
 Two apps are built from this repo: **Taru Tweaks** (menu bar, all modules) and **Task Manager** (standalone, Dock app). Taru Tweaks owns the ⌃⇧Esc shortcut and launches Task Manager.
@@ -38,11 +39,11 @@ Signing uses the local Apple Development certificate (see `project.yml`). Keep t
 ## Layout
 
 - `App/` app shell, menu bar items, settings window, Shortcuts intents
-- `Modules/` Switcher, Battery, Brightness, Dock, MenuBar, TaskManager
+- `Modules/` Switcher, Battery, Brightness, Dock, MenuBar, ModelViewer, TaskManager
 - `TaskManagerApp/` standalone Task Manager app entry point
 - `Shared/` theme, settings UI kit, hotkeys, battery config shared with the helper
 - `Helper/` root launch daemon (`com.taru.tweaks.helper`) registered with `SMAppService`
 
 ## License
 
-GPL-3.0-or-later, see `LICENSE`. The Volume Mixer's audio engine (`Modules/Mixer/MixerEngine.swift`) is ported from [Vorssaint](https://github.com/vorssaint/vorssaint-utils) (GPL-3.0-or-later). The lock-screen wallpaper extension is adapted from Phosphene (MIT, see `WallpaperExtension/LICENSE-Phosphene`).
+GPL-3.0-or-later, see `LICENSE`. The Volume Mixer's audio engine (`Modules/Mixer/MixerEngine.swift`) is ported from [Vorssaint](https://github.com/vorssaint/vorssaint-utils) (GPL-3.0-or-later). The lock-screen wallpaper extension is adapted from Phosphene (MIT, see `WallpaperExtension/LICENSE-Phosphene`). The Model Viewer reads glTF files with [GLTFKit2](https://github.com/warrenm/GLTFKit2) (MIT, see `Modules/ModelViewer/LICENSE-GLTFKit2`), pulled in by Swift Package Manager.

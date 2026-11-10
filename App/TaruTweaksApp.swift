@@ -10,9 +10,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var dashboard: NSWindow?
     var taskManager: NSWindow?
     let nav = Nav()
+    var openedFiles = false
+
+    // Finder's Open With, a file dropped on the app icon, `open -a`
+    func application(_ application: NSApplication, open urls: [URL]) {
+        AppDelegate.shared = self
+        openedFiles = true
+        ModelViewer.shared.open(urls)
+    }
 
     func updateDockIcon() {
-        let any = [settings, dashboard].contains { $0?.isVisible == true }
+        let any = [settings, dashboard].contains { $0?.isVisible == true } || ModelViewer.shared.anyVisible
         let policy: NSApplication.ActivationPolicy = (any || UserDefaults.standard.bool(forKey: "dock.always")) ? .regular : .accessory
         if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
     }
@@ -77,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Clipboard.shared.start()
         ScreenSwap.shared.start()
         Mixer.shared.start()
+        ModelViewer.shared.start()
         updateDockIcon()
         for sig in [SIGTERM, SIGINT] {
             signal(sig, SIG_IGN)
@@ -90,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             UserDefaults.standard.set(true, forKey: "onboarded")
             try? SMAppService.mainApp.register()
             openSettings("general")
-        } else if !atLogin && !CommandLine.arguments.contains("--background") {
+        } else if !atLogin && !openedFiles && event?.eventID != AEEventID(kAEOpenDocuments) && !CommandLine.arguments.contains("--background") {
             openSettings(nil)
         }
     }
@@ -293,6 +302,7 @@ struct MainMenu: View {
             row("XDR Boost", "\(bright.nits) nits", $bright.on)
             ExtraDisplayRow()
             ScreenSwapRow()
+            ModelViewerRow()
             AwakeRow()
             HStack { Text("Task Manager").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.bone); Spacer(); Text("⌃⇧Esc").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash) }
             row("Battery limit", "\(battery.battery.percent)% · \(battery.status?.reason ?? "helper off")", Binding(get: { battery.config.enabled }, set: { v in battery.update { $0.enabled = v } }))

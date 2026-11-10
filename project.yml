@@ -12,6 +12,10 @@ settings:
     DEVELOPMENT_TEAM: A734F6NRJG
     ENABLE_HARDENED_RUNTIME: NO
     ENABLE_APP_SANDBOX: NO
+packages:
+  GLTFKit2:
+    url: https://github.com/warrenm/GLTFKit2
+    exactVersion: 0.5.15
 targets:
   TaruTweaksHelper:
     type: tool
@@ -32,7 +36,7 @@ targets:
       - path: App
       - path: Shared
       - path: Modules
-        excludes: ["TaskManager/**"]
+        excludes: ["TaskManager/**", "ModelViewer/LICENSE-GLTFKit2"]
       - path: Resources/AppIcon.icns
         buildPhase: resources
       - path: Helper/com.taru.tweaks.helper.plist
@@ -47,6 +51,7 @@ targets:
           destination: executables
       - target: TaruWallpaper
         embed: true
+      - package: GLTFKit2
     info:
       path: Resources/Info.plist
       properties:
@@ -58,6 +63,36 @@ targets:
         CFBundleIconFile: AppIcon
         NSHumanReadableCopyright: "Taru · personal build"
         NSAudioCaptureUsageDescription: "Taru Tweaks sets each app's volume on its own in the Volume Mixer."
+        NSDocumentsFolderUsageDescription: "The Model Viewer opens 3D models you keep in Documents."
+        NSDesktopFolderUsageDescription: "The Model Viewer opens 3D models you keep on the Desktop."
+        NSDownloadsFolderUsageDescription: "The Model Viewer opens 3D models you keep in Downloads."
+        NSRemovableVolumesUsageDescription: "The Model Viewer opens 3D models on external drives."
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: USD model
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [com.pixar.universal-scene-description-mobile, com.pixar.universal-scene-description]
+          - CFBundleTypeName: OBJ model
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.geometry-definition-format]
+          - CFBundleTypeName: glTF model
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [org.khronos.glb, org.khronos.gltf]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: org.khronos.glb
+            UTTypeDescription: glTF binary model
+            UTTypeConformsTo: [public.3d-content, public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [glb]
+              public.mime-type: [model/gltf-binary]
+          - UTTypeIdentifier: org.khronos.gltf
+            UTTypeDescription: glTF model
+            UTTypeConformsTo: [public.3d-content, public.json]
+            UTTypeTagSpecification:
+              public.filename-extension: [gltf]
+              public.mime-type: [model/gltf+json]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.taru.tweaks

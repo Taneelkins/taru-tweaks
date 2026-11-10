@@ -6,6 +6,47 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Taru Tweaks</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>USD model</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.pixar.universal-scene-description-mobile</string>
+				<string>com.pixar.universal-scene-description</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>OBJ model</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.geometry-definition-format</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>glTF model</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.khronos.glb</string>
+				<string>org.khronos.gltf</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconFile</key>
@@ -26,7 +67,62 @@
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Taru Tweaks sets each app's volume on its own in the Volume Mixer.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>The Model Viewer opens 3D models you keep on the Desktop.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>The Model Viewer opens 3D models you keep in Documents.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>The Model Viewer opens 3D models you keep in Downloads.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Taru · personal build</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>The Model Viewer opens 3D models on external drives.</string>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.3d-content</string>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>glTF binary model</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.khronos.glb</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>glb</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>model/gltf-binary</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.3d-content</string>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>glTF model</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.khronos.gltf</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>gltf</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>model/gltf+json</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>
