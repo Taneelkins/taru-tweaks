@@ -966,6 +966,8 @@ struct SpeedBox: View {
         .onAppear { text = Self.label(doc.speed) }
         .onChange(of: doc.speed) { _, v in if !typing { text = Self.label(v) } }
         .onChange(of: typing) { _, now in if !now { commit() } }
+        // applies as you type, so it holds even if you click a clip or a button without pressing Return
+        .onChange(of: text) { _, now in if typing, let v = ModelDoc.parseSpeed(now) { doc.setSpeed(v) } }
     }
 
     private func commit() {
