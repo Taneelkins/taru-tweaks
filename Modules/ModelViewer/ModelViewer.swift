@@ -16,7 +16,8 @@ final class ModelViewer {
         //         | "snap <png path>" | "bench" | "wire" | "frame" | "turn <dx> <dy>" | "pan <dx> <dy>" | "zoom <factor> [x y]"
         //         | "explode" (next step) | "draw" | "spin" | "play" | "seek <seconds>" | "clip" (next one) | "clay" | "panel"
         //         | "select <n>" | "hide <n>" | "solo <n>" | "showall" | "copy" | "reload" | "view front|side|top" | "flat"
-        //         | "light <degrees>" | "backdrop" (next one) | "recent <n>" (open the nth recent file)  → /tmp/tarutweaks-model.json
+        //         | "light <degrees>" | "backdrop" (next one) | "recent <n>" (open the nth recent file)
+        //         | "clip <n>" | "speed <x>" | "loop" (loop ↔ play once) | "stop" | "step <frames>" | "tab parts|anims"  → /tmp/tarutweaks-model.json
         DistributedNotificationCenter.default().addObserver(forName: .init("com.taru.tweaks.model"), object: nil, queue: .main) { [weak self] n in self?.debug(n.object as? String ?? "dump") }
     }
 
@@ -107,7 +108,13 @@ final class ModelViewer {
         case "draw": doc?.toggleDrawn()
         case "spin": doc?.spinning.toggle()
         case "play": doc?.playing.toggle()
+        case "clip" where parts.count == 2: if let i = Int(parts[1]) { doc?.choose(i) }
         case "clip": doc?.nextClip()
+        case "speed" where parts.count == 2: if let v = ModelDoc.parseSpeed(parts[1]) { doc?.setSpeed(v) }
+        case "loop": doc?.looping.toggle()
+        case "stop": doc?.stopClip()
+        case "step" where parts.count == 2: if let n = Int(parts[1]) { doc?.step(n) }
+        case "tab" where parts.count == 2: if let t = SideTab(rawValue: parts[1]) { doc?.tab = t; doc?.panel = true }
         case "seek" where parts.count == 2: if let t = Double(parts[1]) { doc?.seek(t) }
         case "frame": doc?.canvas.reframe(animated: false)
         case "turn" where parts.count == 2:
@@ -160,8 +167,13 @@ final class ModelDoc: ObservableObject {
     @Published private(set) var canDraw = false
     @Published private(set) var clips: [ModelClip] = []
     @Published private(set) var clip = 0
-    @Published private(set) var time = 0.0
     @Published var playing = false { didSet { if playing != oldValue { play(playing) } } }
+    // play speed (minus = backwards) and loop vs play once: kept for every clip and every file until changed
+    @Published private(set) var speed = ModelDoc.savedSpeed { didSet { UserDefaults.standard.set(speed, forKey: "model.animSpeed") } }
+    @Published var looping = UserDefaults.standard.object(forKey: "model.animLoop") as? Bool ?? true { didSet { UserDefaults.standard.set(looping, forKey: "model.animLoop") } }
+    @Published var tab = SideTab(rawValue: UserDefaults.standard.string(forKey: "model.tab") ?? "") ?? .parts { didSet { UserDefaults.standard.set(tab.rawValue, forKey: "model.tab") } }
+    // where the clip is, in its own object so only the scrub bars redraw while it plays
+    let playhead = Playhead()
     @Published private(set) var toast: String?
     @Published private(set) var view: String?
     @Published var flat = false { didSet { if flat != oldValue { canvas.setFlat(flat) } } }
@@ -172,6 +184,7 @@ final class ModelDoc: ObservableObject {
     private var model: LoadedModel?
     private var poser: ModelPoser?
     private var clock = 0.0
+    private static var savedSpeed: Double { let v = UserDefaults.standard.double(forKey: "model.animSpeed"); return v == 0 ? 1 : v }
     private var marks: [SCNNode] = []
     private var dressed: [(SCNGeometry, [SCNMaterial])] = []
     private var watch: DispatchSourceFileSystemObject?
@@ -209,7 +222,13 @@ final class ModelDoc: ObservableObject {
             case "w": self.wireframe.toggle()
             case "c": self.clay.toggle()
             case "s": self.spinning.toggle()
-            case "p": self.panel.toggle()
+            case "p": self.showTab(.parts)
+            case "a": self.showTab(.anims)
+            case "o": if self.clips.isEmpty { return false }; self.looping.toggle()
+            case "[": if self.clips.isEmpty { return false }; self.setSpeed(self.speed / 2)
+            case "]": if self.clips.isEmpty { return false }; self.setSpeed(self.speed * 2)
+            case "\u{F702}": if self.clips.isEmpty { return false }; self.step(-1)
+            case "\u{F703}": if self.clips.isEmpty { return false }; self.step(1)
             case "e": self.explode()
             case "u": self.toggleDrawn()
             case "1": self.look("front")
@@ -261,9 +280,11 @@ final class ModelDoc: ObservableObject {
                     return
                 }
                 self.loading = false
+                // a re-export keeps the clip you were on and whether it was playing
+                let keepClip = again && self.clips.indices.contains(self.clip) ? self.clips[self.clip].name : nil, wasPlaying = self.playing
                 self.playing = false; self.spinning = false
                 self.marks = []; self.dressed = []
-                self.clips = []; self.clip = 0; self.time = 0; self.clock = 0; self.pose = .together
+                self.clips = []; self.clip = 0; self.clock = 0; self.playhead.time = 0; self.pose = .together
                 self.selected = nil; self.hovered = nil
                 switch result {
                 case .success(let model):
@@ -278,13 +299,14 @@ final class ModelDoc: ObservableObject {
                                   "size " + [box.x, box.y, box.z].map { String(format: "%.2f", $0) }.joined(separator: " × "),
                                   poser.hasGroups ? "\(poser.groupCount) groups" + (model.setup?.explode != nil ? " (from this model's setup)" : "") : ""].filter { !$0.isEmpty }
                     self.clips = model.clips
-                    self.clips.first?.attach()
+                    if let keepClip, let i = model.clips.firstIndex(where: { $0.name == keepClip }) { self.clip = i }
+                    if self.clips.indices.contains(self.clip) { self.clips[self.clip].attach() }
                     self.canvas.show(model, intro: !again, keepView: again)
                     self.canvas.wireframe = self.wireframe
                     if self.clay { self.applyClay() }
                     self.window.makeFirstResponder(self.canvas)
                     // a file with animation starts moving, like it would in the game
-                    if !self.clips.isEmpty { self.playing = true }
+                    if !self.clips.isEmpty { self.playing = again ? wasPlaying : true }
                     self.watchFile(descriptor, url)
                     if again { self.reloads += 1; self.flash("Reloaded") } else if remember { ModelViewer.shared.remember(url) }
                 case .failure(let error):
@@ -483,33 +505,92 @@ final class ModelDoc: ObservableObject {
     // MARK: animation
 
     var duration: Double { clips.indices.contains(clip) ? clips[clip].duration : 0 }
+    var time: Double { clock }
+
+    // play once has run out: the next play starts it over
+    private var atEnd: Bool { speed > 0 ? clock >= duration - 0.001 : clock <= 0.001 }
 
     private func play(_ on: Bool) {
         guard on, duration > 0 else { canvas.stop("play"); return }
-        canvas.loop("play") { [weak self] passed in
-            guard let self else { return }
-            self.show(self.clock + passed)
+        if !looping, atEnd { show(speed > 0 ? 0 : duration) }
+        canvas.loop("play") { [weak self] passed in self?.advance(passed * (self?.speed ?? 1)) }
+    }
+
+    private func advance(_ by: Double) {
+        let t = clock + by
+        if looping || (t > 0 && t < duration) { show(t); return }
+        // play once: stop on the last (or, backwards, the first) frame
+        show(t >= duration ? duration : 0)
+        playing = false
+    }
+
+    private func show(_ seconds: Double, wrap: Bool? = nil) {
+        guard duration > 0 else { return }
+        if wrap ?? looping {
+            clock = seconds.truncatingRemainder(dividingBy: duration)
+            if clock < 0 { clock += duration }
+        } else {
+            clock = min(max(seconds, 0), duration)
+        }
+        // the clip's own clock wraps at its length, so the very end is drawn a hair before it
+        canvas.sceneTime = min(clock, duration - 0.0001)
+        canvas.needsDisplay = true
+        // the bar doesn't need to redraw more than 30 times a second
+        if abs(clock - playhead.time) > 1.0 / 30 || clock == 0 || clock == duration { playhead.time = clock }
+    }
+
+    func seek(_ seconds: Double) { show(min(max(seconds, 0), duration), wrap: false); playhead.time = clock }
+
+    // back to the first frame and wait there
+    func stopClip() { playing = false; seek(speed > 0 ? 0 : duration) }
+
+    // one frame at 30 a second
+    func step(_ frames: Int) {
+        guard duration > 0 else { return }
+        playing = false
+        let t = clock + Double(frames) / 30
+        seek(looping ? (t < 0 ? t + duration : (t > duration ? t - duration : t)) : t)
+    }
+
+    func choose(_ index: Int) {
+        guard clips.indices.contains(index) else { return }
+        if index != clip {
+            let was = playing
+            playing = false
+            clips[clip].detach()
+            clip = index
+            clips[clip].attach()
+            seek(speed > 0 ? 0 : duration)
+            playing = was
+        } else if !playing {
+            // clicking the clip you're on plays it from the top
+            seek(speed > 0 ? 0 : duration)
+            playing = true
         }
     }
 
-    private func show(_ seconds: Double) {
-        guard duration > 0 else { return }
-        clock = seconds.truncatingRemainder(dividingBy: duration)
-        if clock < 0 { clock += duration }
-        canvas.sceneTime = clock
-        canvas.needsDisplay = true
-        // the bar doesn't need to redraw more than 30 times a second
-        if abs(clock - time) > 1.0 / 30 { time = clock }
+    func nextClip() { if clips.count > 1 { choose((clip + 1) % clips.count) } }
+
+    // keeps it between ±0.01 and ±20 times; 0 or nonsense keeps what was there
+    func setSpeed(_ value: Double) {
+        guard value.isFinite, value != 0 else { return }
+        speed = (value < 0 ? -1 : 1) * min(max(abs(value), 0.01), 20)
     }
 
-    func seek(_ seconds: Double) { show(min(max(seconds, 0), max(duration - 0.0001, 0))); time = clock }
+    // what was typed in the speed box: "0.5", ".25", "2x", "50%", "-1" (backwards)
+    static func parseSpeed(_ text: String) -> Double? {
+        var t = text.trimmingCharacters(in: .whitespaces).lowercased().replacingOccurrences(of: ",", with: ".")
+        var scale = 1.0
+        if t.hasSuffix("%") { t.removeLast(); scale = 0.01 }
+        if t.hasSuffix("x") || t.hasSuffix("×") { t.removeLast() }
+        if t.hasPrefix("x") || t.hasPrefix("×") { t.removeFirst() }
+        guard let v = Double(t.trimmingCharacters(in: .whitespaces)), v != 0 else { return nil }
+        return v * scale
+    }
 
-    func nextClip() {
-        guard clips.count > 1 else { return }
-        clips[clip].detach()
-        clip = (clip + 1) % clips.count
-        clips[clip].attach()
-        seek(0)
+    // P and A: open the side panel on that page, or close it if it's already showing it
+    func showTab(_ which: SideTab) {
+        if panel, tab == which { panel = false } else { tab = which; panel = true }
     }
 
     // MARK: pictures
@@ -542,7 +623,7 @@ final class ModelDoc: ObservableObject {
          "metal": canvas.renderingAPI == .metal, "device": canvas.device?.name ?? "", "wireframe": wireframe, "windowNumber": window.windowNumber, "visible": window.isVisible,
          "frame": NSStringFromRect(window.frame), "screen": window.screen?.localizedName ?? "", "distance": canvas.distance, "yaw": canvas.yaw, "pitch": canvas.pitch,
          "pose": pose.rawValue, "canExplode": canExplode, "canDraw": canDraw, "spinning": spinning, "clips": clips.map { "\($0.name) \(String(format: "%.2f", $0.duration))s" },
-         "clip": clip, "playing": playing, "time": clock, "facts": facts, "selected": selected ?? -1, "hidden": hiddenCount, "clay": clay, "panel": panel,
+         "clip": clip, "playing": playing, "time": clock, "speed": speed, "looping": looping, "tab": tab.rawValue, "facts": facts, "selected": selected ?? -1, "hidden": hiddenCount, "clay": clay, "panel": panel,
          "watching": watch != nil, "reloads": reloads, "toast": toast ?? "", "rows": rows.prefix(8).map { "\($0.name) \($0.triangles)" },
          "view": view ?? "", "flat": flat, "light": Int((canvas.lightTurn * 180 / .pi).rounded()), "backdrop": backdrop.rawValue]
     }
@@ -575,7 +656,7 @@ struct ModelViewerView: View {
                                 .padding(.horizontal, 10).padding(.vertical, 5).background(theme.accent).allowsHitTesting(false)
                         }
                         Spacer(minLength: 0)
-                        if !doc.clips.isEmpty { player }
+                        if !doc.clips.isEmpty, !(doc.panel && doc.tab == .anims) { player }
                         ViewThatFits(in: .horizontal) {
                             HStack(alignment: .bottom, spacing: 12) { info.allowsHitTesting(false); Spacer(minLength: 0); chips }
                             VStack(alignment: .trailing, spacing: 8) { chips; HStack { info.allowsHitTesting(false); Spacer(minLength: 0) } }
@@ -586,7 +667,7 @@ struct ModelViewerView: View {
                 }
                 if dropping { Rectangle().stroke(theme.accent, lineWidth: 3).allowsHitTesting(false) }
             }
-            if showing, doc.panel { PartsPanel(doc: doc) }
+            if showing, doc.panel { SidePanel(doc: doc) }
         }
         .frame(minWidth: 640, minHeight: 420)
         .ignoresSafeArea()
@@ -646,27 +727,250 @@ struct ModelViewerView: View {
                 ViewerChip(title: "Clay", key: "C", on: doc.clay, plate: plate) { doc.clay.toggle() }
                 ViewerChip(title: "Wire", key: "W", on: doc.wireframe, plate: plate) { doc.wireframe.toggle() }
                 ViewerChip(title: "Fit", key: "F", on: false, plate: plate) { doc.canvas.reframe() }
-                ViewerChip(title: "Parts", key: "P", on: doc.panel, plate: plate) { doc.panel.toggle() }
+                if !doc.clips.isEmpty { ViewerChip(title: "Anims", key: "A", on: doc.panel && doc.tab == .anims, plate: plate) { doc.showTab(.anims) } }
+                ViewerChip(title: "Parts", key: "P", on: doc.panel && doc.tab == .parts, plate: plate) { doc.showTab(.parts) }
             }
         }
     }
 
+    // the small bar under the model; the Animations tab has the full player
     var player: some View {
         HStack(spacing: 10) {
             Button { doc.playing.toggle() } label: {
                 Image(systemName: doc.playing ? "pause.fill" : "play.fill").font(.system(size: 12)).foregroundStyle(theme.accent).frame(width: 26, height: 22).contentShape(Rectangle())
             }.buttonStyle(.plain)
-            Slider(value: Binding(get: { doc.time }, set: { doc.playing = false; doc.seek($0) }), in: 0...max(doc.duration, 0.01))
-                .controlSize(.small).tint(theme.accent).focusable(false)
-            Text("\(String(format: "%.2f", doc.time)) / \(String(format: "%.2f", doc.duration)) s").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash).fixedSize()
+            ScrubBar(doc: doc, playhead: doc.playhead, compact: true)
             if doc.clips.indices.contains(doc.clip) {
                 ViewerChip(title: doc.clips[doc.clip].name, key: doc.clips.count > 1 ? "\(doc.clip + 1)/\(doc.clips.count)" : "", on: false) { doc.nextClip() }
             }
+            ViewerChip(title: "\(SpeedBox.label(doc.speed))× · \(doc.looping ? "loop" : "once")", key: "A", on: false) { doc.showTab(.anims) }
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .background(Color.black.opacity(plate))
-        .frame(maxWidth: 640)
+        .frame(maxWidth: 680)
         .frame(maxWidth: .infinity)
+    }
+}
+
+enum SideTab: String { case parts, anims }
+
+final class Playhead: ObservableObject { @Published var time = 0.0 }
+
+// the side panel: the model's parts on one page, its animations on the other
+struct SidePanel: View {
+    @ObservedObject var doc: ModelDoc
+    @ObservedObject var theme = Theme.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                tab("Parts", .parts, count: doc.rows.count)
+                tab("Animations", .anims, count: doc.clips.count)
+            }
+            .padding(.top, 30)
+            Rectangle().fill(Palette.rule).frame(height: 1)
+            if doc.tab == .parts { PartsPanel(doc: doc) } else { AnimationsPane(doc: doc) }
+        }
+        .frame(width: 264)
+        .frame(maxHeight: .infinity)
+        .background(Color(red: 0.035, green: 0.035, blue: 0.04))
+        .overlay(alignment: .leading) { Rectangle().fill(Palette.rule).frame(width: 1) }
+    }
+
+    func tab(_ title: String, _ which: SideTab, count: Int) -> some View {
+        let on = doc.tab == which
+        return Button { doc.tab = which } label: {
+            HStack(spacing: 5) {
+                Text(title.uppercased()).font(.system(size: 10, weight: .bold, design: .monospaced)).tracking(1.5).foregroundStyle(on ? Palette.bone : Palette.ash)
+                Text("\(count)").font(.system(size: 9.5, design: .monospaced)).foregroundStyle(on ? theme.accent : Palette.ash.opacity(0.7))
+            }
+            .frame(maxWidth: .infinity).padding(.vertical, 9)
+            .overlay(alignment: .bottom) { Rectangle().fill(on ? theme.accent : .clear).frame(height: 2) }
+            .contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+}
+
+// the full player: every clip in the file, transport, loop or once, a scrub bar and a speed you can type
+struct AnimationsPane: View {
+    @ObservedObject var doc: ModelDoc
+    @ObservedObject var theme = Theme.shared
+
+    var body: some View {
+        if doc.clips.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                label("No animations")
+                Text("This file has no animation in it.").font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.bone)
+                Text("Blender's .usdz export often leaves animation out; a .glb export keeps it.").font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash).fixedSize(horizontal: false, vertical: true)
+                Spacer()
+            }
+            .padding(12)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
+                    if doc.clips.indices.contains(doc.clip) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(doc.clips[doc.clip].name).font(.system(size: 13, weight: .semibold, design: .monospaced)).foregroundStyle(theme.accent).lineLimit(1).truncationMode(.middle)
+                            Text("clip \(doc.clip + 1) of \(doc.clips.count) · \(String(format: "%.2f", doc.duration)) s · \(Int((doc.duration * 30).rounded())) frames").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash)
+                        }
+                    }
+                    ScrubBar(doc: doc, playhead: doc.playhead, compact: false)
+                    HStack(spacing: 4) {
+                        icon("backward.end.fill", "Back to the start") { doc.stopClip() }
+                        icon("backward.frame.fill", "One frame back (←)") { doc.step(-1) }
+                        icon(doc.playing ? "pause.fill" : "play.fill", "Play / pause (Space)", big: true) { doc.playing.toggle() }
+                        icon("forward.frame.fill", "One frame on (→)") { doc.step(1) }
+                        Spacer(minLength: 0)
+                    }
+                    HStack(spacing: 6) {
+                        label("Repeat")
+                        Spacer()
+                        ViewerChip(title: "Loop", key: "", on: doc.looping) { doc.looping = true }.help("Play round and round (O switches)")
+                        ViewerChip(title: "Once", key: "O", on: !doc.looping) { doc.looping = false }.help("Play to the end and stop (O switches)")
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            label("Speed")
+                            Spacer()
+                            SpeedBox(doc: doc)
+                        }
+                        HStack(spacing: 4) {
+                            ForEach([0.1, 0.25, 0.5, 1, 2], id: \.self) { v in
+                                ViewerChip(title: SpeedBox.label(v) + "×", key: "", on: doc.speed == v) { doc.setSpeed(v) }
+                            }
+                        }
+                        Text("type any speed · minus plays backwards · [ ] halve / double").font(.system(size: 9.5, design: .monospaced)).foregroundStyle(Palette.ash.opacity(0.8)).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(12)
+                Rectangle().fill(Palette.rule).frame(height: 1)
+                HStack { label("Clips"); Spacer() }.padding(.horizontal, 12).padding(.vertical, 8)
+                ScrollView {
+                    LazyVStack(spacing: 1) { ForEach(doc.clips.indices, id: \.self) { i in ClipLine(doc: doc, playhead: doc.playhead, index: i) } }.padding(.bottom, 8)
+                }
+            }
+        }
+    }
+
+    func label(_ text: String) -> some View {
+        Text(text.uppercased()).font(.system(size: 10, weight: .bold, design: .monospaced)).tracking(2).foregroundStyle(Palette.ash)
+    }
+
+    func icon(_ name: String, _ tip: String, big: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name).font(.system(size: big ? 14 : 11)).foregroundStyle(big ? Palette.pit : Palette.bone)
+                .frame(width: big ? 36 : 28, height: 26)
+                .background(big ? theme.accent : Color.black.opacity(0.45))
+                .overlay(Rectangle().stroke(big ? theme.accent : Palette.ash.opacity(0.5)))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).help(tip).accessibilityLabel(tip)
+    }
+}
+
+// one clip in the list: its name and length; the one playing shows how far along it is
+struct ClipLine: View {
+    @ObservedObject var doc: ModelDoc
+    @ObservedObject var playhead: Playhead
+    @ObservedObject var theme = Theme.shared
+    let index: Int
+    @State private var over = false
+
+    // the list can empty under a row while the window closes or the file reloads
+    var body: some View {
+        if doc.clips.indices.contains(index) { row(doc.clips[index]) }
+    }
+
+    func row(_ clip: ModelClip) -> some View {
+        let on = doc.clip == index
+        return HStack(spacing: 8) {
+            Image(systemName: on && doc.playing ? "speaker.wave.2.fill" : "film").font(.system(size: 9)).foregroundStyle(on ? theme.accent : Palette.ash).frame(width: 14)
+            Text(clip.name).font(.system(size: 11, design: .monospaced)).fontWeight(on ? .bold : .regular).foregroundStyle(Palette.bone).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 4)
+            Text(String(format: "%.2f s", clip.duration)).font(.system(size: 11, design: .monospaced)).foregroundStyle(on ? Palette.bone : Palette.ash)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .overlay(alignment: .leading) { if on { Rectangle().fill(theme.accent).frame(width: 3) } }
+        .background(alignment: .leading) {
+            GeometryReader { box in
+                Rectangle().fill(on ? theme.accent.opacity(0.28) : Color.white.opacity(over ? 0.07 : 0))
+                    .frame(width: on && doc.duration > 0 ? box.size.width * CGFloat(playhead.time / doc.duration) : box.size.width)
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { over = $0 }
+        .onTapGesture { doc.choose(index) }
+        .help(on ? "Play this clip from the start" : "Switch to this clip")
+    }
+}
+
+// drag to scrub; it pauses while you drag and carries on after if it was playing
+struct ScrubBar: View {
+    @ObservedObject var doc: ModelDoc
+    @ObservedObject var playhead: Playhead
+    @ObservedObject var theme = Theme.shared
+    let compact: Bool
+    @State private var resume = false
+
+    var body: some View {
+        let slider = Slider(value: Binding(get: { playhead.time }, set: { doc.seek($0) }), in: 0...max(doc.duration, 0.01)) { editing in
+            if editing { resume = doc.playing; doc.playing = false } else if resume { resume = false; doc.playing = true }
+        }
+        .controlSize(.small).tint(theme.accent).focusable(false)
+        let readout = Text("\(String(format: "%.2f", playhead.time)) / \(String(format: "%.2f", doc.duration)) s").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash).lineLimit(1)
+            .frame(width: 112, height: 14, alignment: .trailing)
+        // fixed sizes, so a changing number never makes the window lay itself out again
+        if compact {
+            HStack(spacing: 10) { slider.frame(height: 18); readout }
+        } else {
+            VStack(alignment: .trailing, spacing: 2) {
+                slider.frame(height: 18)
+                HStack(spacing: 0) {
+                    Text("frame \(Int((playhead.time * 30).rounded()))").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash.opacity(0.8)).lineLimit(1)
+                        .frame(width: 100, height: 14, alignment: .leading)
+                    Spacer(minLength: 0)
+                    readout
+                }
+            }
+        }
+    }
+}
+
+// the speed you type: Return or clicking away keeps it, Esc puts back what was there
+struct SpeedBox: View {
+    @ObservedObject var doc: ModelDoc
+    @State private var text = ""
+    @State private var bad = false
+    @FocusState private var typing: Bool
+
+    static func label(_ v: Double) -> String {
+        var s = String(format: "%.3f", v)
+        while s.hasSuffix("0") { s.removeLast() }
+        if s.hasSuffix(".") { s.removeLast() }
+        return s
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            TextField("1", text: $text)
+                .textFieldStyle(.plain).font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundStyle(bad ? Color.red : Palette.bone)
+                .multilineTextAlignment(.trailing).frame(width: 58)
+                .focused($typing)
+                .onSubmit { commit(); doc.window.makeFirstResponder(doc.canvas) }
+                .onExitCommand { text = Self.label(doc.speed); bad = false; doc.window.makeFirstResponder(doc.canvas) }
+            Text("×").font(.system(size: 12, design: .monospaced)).foregroundStyle(Palette.ash)
+        }
+        .padding(.horizontal, 6).padding(.vertical, 3)
+        .background(Color.black.opacity(0.5))
+        .overlay(Rectangle().stroke(typing ? Palette.accent : Palette.ash.opacity(0.5)))
+        .help("Type a speed: 0.5, 2, 50%, -1 plays backwards")
+        .onAppear { text = Self.label(doc.speed) }
+        .onChange(of: doc.speed) { _, v in if !typing { text = Self.label(v) } }
+        .onChange(of: typing) { _, now in if !now { commit() } }
+    }
+
+    private func commit() {
+        if let v = ModelDoc.parseSpeed(text) { doc.setSpeed(v); bad = false; text = Self.label(doc.speed) }
+        else { bad = true; DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { bad = false; text = Self.label(doc.speed) } }
     }
 }
 
@@ -685,7 +989,7 @@ struct PartsPanel: View {
                 Text("\(doc.triangles.formatted()) triangles · \(doc.rows.count) \(doc.rows.count == 1 ? "part" : "parts")").font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.bone)
                 ForEach(doc.facts, id: \.self) { Text($0).font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash).fixedSize(horizontal: false, vertical: true) }
             }
-            .padding(.horizontal, 12).padding(.top, 34).padding(.bottom, 10)
+            .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 10)
             Rectangle().fill(Palette.rule).frame(height: 1)
             HStack(spacing: 6) {
                 label("Parts")
@@ -711,10 +1015,6 @@ struct PartsPanel: View {
                 .padding(12)
             }
         }
-        .frame(width: 264)
-        .frame(maxHeight: .infinity)
-        .background(Color(red: 0.035, green: 0.035, blue: 0.04))
-        .overlay(alignment: .leading) { Rectangle().fill(Palette.rule).frame(width: 1) }
         .onHover { if !$0 { doc.hovered = nil } }
     }
 
