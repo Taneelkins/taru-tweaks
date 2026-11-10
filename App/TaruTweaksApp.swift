@@ -16,11 +16,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         AppDelegate.shared = self
         openedFiles = true
-        ModelViewer.shared.open(urls)
+        // the Model Viewer is its own app now; anything still sent here goes to it
+        ModelViewerLauncher.open(urls)
     }
 
     func updateDockIcon() {
-        let any = [settings, dashboard].contains { $0?.isVisible == true } || ModelViewer.shared.anyVisible
+        let any = [settings, dashboard].contains { $0?.isVisible == true }
         let policy: NSApplication.ActivationPolicy = (any || UserDefaults.standard.bool(forKey: "dock.always")) ? .regular : .accessory
         if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
     }
@@ -86,7 +87,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ScreenSwap.shared.start()
         Mixer.shared.start()
         startWatchdog()
-        ModelViewer.shared.start()
         updateDockIcon()
         for sig in [SIGTERM, SIGINT] {
             signal(sig, SIG_IGN)

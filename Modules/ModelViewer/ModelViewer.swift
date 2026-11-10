@@ -10,6 +10,8 @@ final class ModelViewer {
     private(set) var docs: [ModelDoc] = []
 
     var anyVisible: Bool { docs.contains { $0.window.isVisible } }
+    // the BetterDisplay virtual screen's name lives in Taru Tweaks' settings
+    private var extraDisplayName: String { UserDefaults(suiteName: "com.taru.tweaks")?.string(forKey: "display.extra.name") ?? "UC Test Display" }
 
     func start() {
         // object: "dump" | "open <path>" (no focus steal, lands on the extra display if there is one) | "new" (empty window, same way) | "close"
@@ -42,19 +44,18 @@ final class ModelViewer {
                 if let token = doc?.closing { NotificationCenter.default.removeObserver(token) }
                 doc?.shutDown()
                 self?.docs.removeAll { $0 === doc }
-                DispatchQueue.main.async { AppDelegate.shared.updateDockIcon() }
             }
             if let url { doc.load(url, remember: !quiet) }
         }
         if quiet {
-            if let other = NSScreen.screens.first(where: { $0.localizedName == ExtraDisplay.shared.name }) {
+            if let other = NSScreen.screens.first(where: { $0.localizedName == self.extraDisplayName }) {
                 let size = NSSize(width: 1100, height: 760)
                 doc.window.setFrame(NSRect(x: other.visibleFrame.midX - size.width / 2, y: other.visibleFrame.midY - size.height / 2, width: size.width, height: size.height), display: true)
             }
             doc.window.orderFrontRegardless()
-            AppDelegate.shared.updateDockIcon()
         } else {
-            AppDelegate.shared.present(doc.window)
+            NSApp.activate(ignoringOtherApps: true)
+            doc.window.makeKeyAndOrderFront(nil)
         }
         return doc
     }
@@ -1094,14 +1095,3 @@ struct CanvasHost: NSViewRepresentable {
     func updateNSView(_ view: ModelCanvas, context: Context) {}
 }
 
-struct ModelViewerRow: View {
-    var body: some View {
-        HStack {
-            Text("Model Viewer").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.bone)
-            Spacer()
-            Text("usdz · glb · obj").font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Palette.ash)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { ModelViewer.shared.open(nil) }
-    }
-}
