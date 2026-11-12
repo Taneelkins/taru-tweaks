@@ -56,13 +56,15 @@ struct LoadedModel {
 }
 
 enum ModelLoader {
-    static let types: Set<String> = ["usdz", "usd", "usda", "usdc", "obj", "glb", "gltf"]
+    static let types: Set<String> = ["usdz", "usd", "usda", "usdc", "obj", "glb", "gltf", "fbx"]
     static let sheathNames = ["saya", "sheath", "scabbard", "sageo", "holster"]
 
     struct Failure: LocalizedError { let errorDescription: String? }
 
     // runs off the main thread; everything here is plain data until the view takes the scene
-    static func load(_ url: URL) throws -> LoadedModel {
+    static func load(_ file: URL) throws -> LoadedModel {
+        // SceneKit can't read .fbx; turn it into a cached .glb first and load that
+        let url = file.pathExtension.lowercased() == "fbx" ? try FBX.glb(for: file) : file
         let ext = url.pathExtension.lowercased()
         let gltf = ext == "glb" || ext == "gltf"
         let source: SCNScene
@@ -140,7 +142,7 @@ enum ModelLoader {
         var clips = named.enumerated().map { i, pair in ModelClip(name: pair.0.isEmpty ? "Clip \(i + 1)" : pair.0, players: [(content, "clip", ModelClip.player(pair.1))]) }
         if !moving.isEmpty { clips.append(ModelClip(name: "Animation", players: moving)) }
         return LoadedModel(scene: scene, stage: stage, content: content, low: low, high: high, triangles: triangles, cutouts: cutouts, parts: parts, clips: clips.filter { $0.duration > 0 },
-                           setup: ModelSetup.load(for: url), materials: materials.count, textures: images ?? pictures.count, largestTexture: largest)
+                           setup: ModelSetup.load(for: file), materials: materials.count, textures: images ?? pictures.count, largestTexture: largest)
     }
 
     // a texture's identity and its longest side, without decoding it
@@ -290,4 +292,50 @@ enum Backdrop: String, CaseIterable {
     }()
 
     var picture: Any { Backdrop.pictures[self] ?? NSColor.black }
+}
+
+// .fbx → .glb with the Assimp command-line tool (BSD-3) bundled in the app (Homebrew's as a fallback).
+// The .glb is cached by path, size and date, so reopening the same file is instant.
+enum FBX {
+    static var tool: URL? {
+        let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/assimp")
+        for url in [bundled, URL(fileURLWithPath: "/opt/homebrew/bin/assimp"), URL(fileURLWithPath: "/usr/local/bin/assimp")]
+        where FileManager.default.isExecutableFile(atPath: url.path) { return url }
+        return nil
+    }
+
+    static func glb(for file: URL) throws -> URL {
+        guard let tool else { throw ModelLoader.Failure(errorDescription: "Opening .fbx needs the Assimp converter, which is missing from Model Viewer") }
+        let info = try? FileManager.default.attributesOfItem(atPath: file.path)
+        let size = (info?[.size] as? NSNumber)?.int64Value ?? 0
+        let date = Int((info?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
+        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Model Viewer/fbx", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = file.deletingPathExtension().lastPathComponent
+        let out = folder.appendingPathComponent("\(name)-\(stableKey(file.path))-\(size)-\(date).glb")
+        if FileManager.default.fileExists(atPath: out.path) { return out }
+        // drop older conversions of this same file
+        for old in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        where old.lastPathComponent.hasPrefix("\(name)-\(stableKey(file.path))-") { try? FileManager.default.removeItem(at: old) }
+        let temp = folder.appendingPathComponent(UUID().uuidString + ".glb")
+        let run = Process()
+        run.executableURL = tool
+        run.arguments = ["export", file.path, temp.path, "-fglb2", "-tri"]
+        let err = Pipe(); run.standardError = err; run.standardOutput = Pipe()
+        try run.run(); run.waitUntilExit()
+        guard run.terminationStatus == 0, FileManager.default.fileExists(atPath: temp.path) else {
+            try? FileManager.default.removeItem(at: temp)
+            let text = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            throw ModelLoader.Failure(errorDescription: "Couldn't convert this .fbx" + (text.isEmpty ? "" : ": " + String(text.suffix(200))))
+        }
+        try FileManager.default.moveItem(at: temp, to: out)
+        return out
+    }
+
+    // FNV-1a, stable across launches (Swift's Hasher is seeded per run)
+    static func stableKey(_ s: String) -> String {
+        var h: UInt64 = 0xcbf29ce484222325
+        for b in s.utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
+        return String(h, radix: 16)
+    }
 }

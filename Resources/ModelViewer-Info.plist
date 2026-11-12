@@ -46,6 +46,19 @@
 				<string>org.khronos.gltf</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>FBX model</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.autodesk.fbx</string>
+				<string>com.autodesk.mac.fbx</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
@@ -75,6 +88,24 @@
 	<string>The Model Viewer opens 3D models on external drives.</string>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.3d-content</string>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>FBX model</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.autodesk.fbx</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>fbx</string>
+				</array>
+			</dict>
+		</dict>
 		<dict>
 			<key>UTTypeConformsTo</key>
 			<array>

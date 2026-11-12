@@ -136,6 +136,22 @@ targets:
         buildPhase: resources
     dependencies:
       - package: GLTFKit2
+    postBuildScripts:
+      - name: Bundle Assimp (FBX converter)
+        basedOnDependencyAnalysis: false
+        script: |
+          # Copies Homebrew's assimp tool + library into the app so .fbx opens without Homebrew; skipped when it isn't installed
+          for p in /opt/homebrew/opt/assimp /usr/local/opt/assimp; do [ -x "$p/bin/assimp" ] && A="$p" && break; done
+          [ -z "$A" ] && { echo "warning: assimp not found, Model Viewer will open .fbx only if Homebrew assimp is installed"; exit 0; }
+          C="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH"
+          mkdir -p "$C/Helpers" "$C/Frameworks"
+          cp -f "$A/bin/assimp" "$C/Helpers/assimp"
+          cp -fL "$A/lib/libassimp.6.dylib" "$C/Frameworks/libassimp.6.dylib"
+          chmod u+w "$C/Helpers/assimp" "$C/Frameworks/libassimp.6.dylib"
+          install_name_tool -id @rpath/libassimp.6.dylib "$C/Frameworks/libassimp.6.dylib" 2>/dev/null
+          install_name_tool -add_rpath @executable_path/../Frameworks "$C/Helpers/assimp" 2>/dev/null || true
+          codesign -f -s "${EXPANDED_CODE_SIGN_IDENTITY:--}" "$C/Frameworks/libassimp.6.dylib"
+          codesign -f -s "${EXPANDED_CODE_SIGN_IDENTITY:--}" "$C/Helpers/assimp"
     info:
       path: Resources/ModelViewer-Info.plist
       properties:
@@ -158,7 +174,16 @@ targets:
             CFBundleTypeRole: Viewer
             LSHandlerRank: Alternate
             LSItemContentTypes: [org.khronos.glb, org.khronos.gltf]
+          - CFBundleTypeName: FBX model
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [com.autodesk.fbx, com.autodesk.mac.fbx]
         UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.autodesk.fbx
+            UTTypeDescription: FBX model
+            UTTypeConformsTo: [public.3d-content, public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [fbx]
           - UTTypeIdentifier: org.khronos.glb
             UTTypeDescription: glTF binary model
             UTTypeConformsTo: [public.3d-content, public.data]

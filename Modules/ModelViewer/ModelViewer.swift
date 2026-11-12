@@ -3,7 +3,7 @@ import AppKit
 import SceneKit
 import UniformTypeIdentifiers
 
-// 3D model viewer: .usdz/.usd/.obj through SceneKit, .glb/.gltf through GLTFKit2. One window per file,
+// 3D model viewer: .usdz/.usd/.obj through SceneKit, .glb/.gltf through GLTFKit2, .fbx converted to .glb by Assimp. One window per file,
 // opened from Finder's Open With, a drop on a viewer window, or the flame menu. Nothing runs while no window is open.
 final class ModelViewer {
     static let shared = ModelViewer()
@@ -301,7 +301,8 @@ final class ModelDoc: ObservableObject {
                     self.rows = model.parts.enumerated().map { PartRow(id: $0, name: $1.name, triangles: $1.triangles, materials: $1.materials, group: $1.path.first ?? "") }
                     let box = model.high - model.low
                     self.facts = ["\(model.materials) \(model.materials == 1 ? "material" : "materials") · \(model.textures) \(model.textures == 1 ? "texture" : "textures")" + (model.largestTexture > 0 ? " (largest \(model.largestTexture) px)" : ""),
-                                  "size " + [box.x, box.y, box.z].map { String(format: "%.2f", $0) }.joined(separator: " × "),
+                                  // FBX unit scales come through the converter unreliably (Blender's land 100× or more too big), so no size for them
+                                  url.pathExtension.lowercased() == "fbx" ? "" : "size " + [box.x, box.y, box.z].map { String(format: "%.2f", $0) }.joined(separator: " × "),
                                   poser.hasGroups ? "\(poser.groupCount) groups" + (model.setup?.explode != nil ? " (from this model's setup)" : "") : ""].filter { !$0.isEmpty }
                     self.clips = model.clips
                     if let keepClip, let i = model.clips.firstIndex(where: { $0.name == keepClip }) { self.clip = i }
@@ -690,7 +691,7 @@ struct ModelViewerView: View {
         VStack(spacing: 12) {
             Image(systemName: "cube.transparent").font(.system(size: 44, weight: .ultraLight)).foregroundStyle(Palette.ash)
             Text(doc.problem == nil ? "Drop a model here" : "Couldn't open \(doc.url?.lastPathComponent ?? "that file")").font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.bone)
-            Text(doc.problem ?? ".usdz  .usd  .obj  .glb  .gltf").font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash).multilineTextAlignment(.center).frame(maxWidth: 420)
+            Text(doc.problem ?? ".usdz  .usd  .obj  .glb  .gltf  .fbx").font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.ash).multilineTextAlignment(.center).frame(maxWidth: 420)
             TweakButton(title: "Open") { ModelViewer.shared.pick(into: doc) }.padding(.top, 4)
             let recent = ModelViewer.shared.recent.filter { $0 != doc.url?.path }.prefix(6)
             if !recent.isEmpty {
