@@ -19,6 +19,7 @@ final class ModelViewer {
         //         | "explode" (next step) | "draw" | "spin" | "play" | "seek <seconds>" | "clip" (next one) | "clay" | "panel"
         //         | "select <n>" | "hide <n>" | "solo <n>" | "showall" | "copy" | "reload" | "view front|side|top" | "flat"
         //         | "light <degrees>" | "backdrop" (next one) | "recent <n>" (open the nth recent file)
+        //         | "uv" | "checker" | "uvsnap <png path>"
         //         | "clip <n>" | "speed <x>" | "loop" (loop ↔ play once) | "stop" | "step <frames>" | "tab parts|anims"  → /tmp/tarutweaks-model.json
         DistributedNotificationCenter.default().addObserver(forName: .init("com.taru.tweaks.model"), object: nil, queue: .main) { [weak self] n in self?.debug(n.object as? String ?? "dump") }
     }
@@ -99,6 +100,10 @@ final class ModelViewer {
         case "wire": doc?.wireframe.toggle()
         case "explode": doc?.explode()
         case "clay": doc?.clay.toggle()
+        case "uv": doc?.uvOpen.toggle()
+        case "checker": doc?.checker.toggle()
+        case "uvsnap" where parts.count == 2:
+            if let v = doc?.uvCanvas, let tiff = v.snapshot().tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) { try? png.write(to: URL(fileURLWithPath: parts[1])) }
         case "panel": doc?.panel.toggle()
         case "showall": doc?.showAll()
         case "copy": doc?.copyPicture()
@@ -158,14 +163,23 @@ final class ModelDoc: ObservableObject {
     @Published var problem: String?
     @Published var triangles = 0
     @Published var bytes: Int64 = 0
-    @Published private(set) var rows: [PartRow] = []
+    @Published private(set) var rows: [PartRow] = [] { didSet { uvCanvas.hiddenParts = Set(rows.filter(\.hidden).map(\.id)) } }
     @Published private(set) var facts: [String] = []
-    @Published private(set) var selected: Int?
+    @Published private(set) var selected: Int? { didSet { if selected != oldValue { uvCanvas.selected = selected; if uvOpen { pickUVImage() } } } }
     @Published var hovered: Int? { didSet { if hovered != oldValue { mark() } } }
     @Published var panel = UserDefaults.standard.object(forKey: "model.panel") as? Bool ?? true { didSet { UserDefaults.standard.set(panel, forKey: "model.panel") } }
     @Published var byTriangles = false
     @Published var wireframe = false { didSet { canvas.wireframe = wireframe } }
-    @Published var clay = false { didSet { if clay != oldValue { applyClay() } } }
+    @Published var clay = false { didSet { if clay != oldValue { if clay { checker = false }; applySurface() } } }
+    // UV map beside the 3D view, the checker grid on the model, and whether the map shows the part's texture
+    @Published var uvOpen = false { didSet { if uvOpen != oldValue { if uvOpen { readUVs() } else { checker = false } } } }
+    @Published var checker = false { didSet { if checker != oldValue { if checker { clay = false }; applySurface() } } }
+    @Published var uvTexture = UserDefaults.standard.object(forKey: "model.uvTexture") as? Bool ?? true { didSet { UserDefaults.standard.set(uvTexture, forKey: "model.uvTexture"); pickUVImage() } }
+    @Published private(set) var uvParts: [UVPart] = []
+    @Published private(set) var uvReading = false
+    @Published private(set) var uvTextureName = ""
+    let uvCanvas = UVCanvas()
+    private var uvImages: [ObjectIdentifier: CGImage?] = [:]
     @Published var spinning = false { didSet { canvas.spinning = spinning } }
     @Published private(set) var pose = ModelPoser.Pose.together
     @Published private(set) var canExplode = false
@@ -213,6 +227,8 @@ final class ModelDoc: ObservableObject {
         window.setFrameAutosaveName(offset == 0 ? "ModelViewer" : "")
         if offset > 0 { window.setFrameOrigin(NSPoint(x: window.frame.minX + CGFloat(offset % 8) * 28, y: window.frame.minY - CGFloat(offset % 8) * 28)) }
         canvas.setBackdrop(backdrop)
+        uvCanvas.accent = NSColor(Theme.shared.accent)
+        uvCanvas.onPick = { [weak self] index in self?.select(index, focus: false) }
         canvas.onView = { [weak self] name in self?.view = name }
         canvas.onClick = { [weak self] point in self?.select(self?.part(at: point)?.index, focus: false) }
         // double-click a spot to zoom in on it, double-click empty space to see everything again
@@ -226,6 +242,8 @@ final class ModelDoc: ObservableObject {
             case "f": self.canvas.reframe()
             case "z": self.wireframe.toggle()
             case "c": self.clay.toggle()
+            case "v": self.uvOpen.toggle()
+            case "k": self.checker.toggle()
             case "t": self.spinning.toggle()
             case "p": self.showTab(.parts)
             case "n": self.showTab(.anims)
@@ -261,7 +279,7 @@ final class ModelDoc: ObservableObject {
         ticket += 1
         watch?.cancel(); watch = nil; settle?.cancel()
         canvas.clear()
-        model = nil; poser = nil; marks = []; dressed = []; clips = []; rows = []
+        model = nil; poser = nil; marks = []; dressed = []; clips = []; rows = []; uvParts = []; uvCanvas.parts = []; uvImages = [:]
         DispatchQueue.main.async { [window] in window.contentView = nil }
     }
 
@@ -309,7 +327,9 @@ final class ModelDoc: ObservableObject {
                     if self.clips.indices.contains(self.clip) { self.clips[self.clip].attach() }
                     self.canvas.show(model, intro: !again, keepView: again)
                     self.canvas.wireframe = self.wireframe
-                    if self.clay { self.applyClay() }
+                    if self.clay || self.checker { self.applySurface() }
+                    self.uvParts = []; self.uvCanvas.parts = []; self.uvImages = [:]
+                    if self.uvOpen { self.readUVs() }
                     self.window.makeFirstResponder(self.canvas)
                     // a file with animation starts moving, like it would in the game
                     if !self.clips.isEmpty { self.playing = again ? wasPlaying : true }
@@ -408,21 +428,91 @@ final class ModelDoc: ObservableObject {
 
     var hiddenCount: Int { rows.filter(\.hidden).count }
 
-    // plain grey instead of textures, to judge the shape on its own
-    private func applyClay() {
-        guard let model else { return }
-        if clay {
-            let grey = SCNMaterial()
-            grey.lightingModel = .physicallyBased
-            grey.diffuse.contents = NSColor(white: 0.62, alpha: 1)
-            grey.roughness.contents = 0.6; grey.metalness.contents = 0.0
-            grey.isDoubleSided = true
-            for part in model.parts { if let g = part.node.geometry { dressed.append((g, g.materials)); g.materials = [grey] } }
-        } else {
-            for (geometry, materials) in dressed { geometry.materials = materials }
-            dressed = []
+    // plain grey instead of textures to judge the shape on its own, or the numbered checker to judge the UVs
+    private func applySurface() {
+        for (geometry, materials) in dressed { geometry.materials = materials }
+        dressed = []
+        if let model, clay || checker {
+            let look = SCNMaterial()
+            look.lightingModel = .physicallyBased
+            if clay {
+                look.diffuse.contents = NSColor(white: 0.62, alpha: 1)
+                look.roughness.contents = 0.6
+            } else {
+                look.diffuse.contents = UVReader.checker
+                look.diffuse.wrapS = .repeat; look.diffuse.wrapT = .repeat
+                look.diffuse.mipFilter = .linear
+                look.roughness.contents = 0.75
+            }
+            look.metalness.contents = 0.0
+            look.isDoubleSided = true
+            for part in model.parts { if let g = part.node.geometry { dressed.append((g, g.materials)); g.materials = [look] } }
         }
         canvas.needsDisplay = true
+    }
+
+    // the file's own materials, even while clay or the checker is on
+    private func originals(_ g: SCNGeometry) -> [SCNMaterial] { dressed.first { $0.0 === g }?.1 ?? g.materials }
+
+    // MARK: UV map
+
+    func readUVs() {
+        guard let model, uvParts.isEmpty, !uvReading else { pickUVImage(); return }
+        uvReading = true
+        let mine = ticket
+        DispatchQueue.global(qos: .userInitiated).async {
+            let parts = UVReader.parts(model)
+            DispatchQueue.main.async {
+                guard mine == self.ticket else { return }
+                self.uvReading = false
+                self.uvParts = parts; self.uvCanvas.parts = parts
+                self.uvCanvas.selected = self.selected
+                self.uvCanvas.hiddenParts = Set(self.rows.filter(\.hidden).map(\.id))
+                self.pickUVImage()
+            }
+        }
+    }
+
+    // the selected part's texture behind the map, or the first textured part's when nothing is selected
+    func pickUVImage() {
+        guard let model, let url else { return }
+        guard uvTexture else { uvCanvas.image = nil; uvTextureName = ""; return }
+        let order = (selected.map { [$0] } ?? []) + model.parts.indices.filter { $0 != selected }
+        let file = url.pathExtension.lowercased() == "fbx" ? ((try? FBX.glb(for: url)) ?? url) : url
+        for i in order {
+            guard let g = model.parts[i].node.geometry, let m = originals(g).first, m.diffuse.contents != nil,
+                  !(m.diffuse.contents is NSColor), !(m.diffuse.contents is NSNumber) else { if i == selected { break } else { continue } }
+            let key = ObjectIdentifier(m)
+            let name = m.name ?? ""
+            if let cached = uvImages[key] { uvCanvas.image = cached; uvTextureName = cached == nil ? "" : name; return }
+            let mine = ticket
+            DispatchQueue.global(qos: .userInitiated).async {
+                let image = UVReader.texture(m, file: file)
+                DispatchQueue.main.async {
+                    guard mine == self.ticket else { return }
+                    self.uvImages[key] = image
+                    self.pickUVImage()
+                }
+            }
+            return
+        }
+        uvCanvas.image = nil; uvTextureName = ""
+    }
+
+    var uvTitle: String {
+        let who = selected.flatMap { rows.indices.contains($0) ? rows[$0].name : nil } ?? "all parts"
+        return uvTextureName.isEmpty ? who : "\(who) · \(uvTextureName)"
+    }
+
+    var uvNote: String {
+        let shown = uvParts.filter { selected == nil || $0.index == selected }
+        let tris = shown.reduce(0) { $0 + $1.corners.count / 3 }
+        var outside = 0
+        for p in shown { var k = 0; while k + 2 < p.corners.count {
+            if (k..<k + 3).contains(where: { p.corners[$0].x < -0.001 || p.corners[$0].x > 1.001 || p.corners[$0].y < -0.001 || p.corners[$0].y > 1.001 }) { outside += 1 }
+            k += 3 } }
+        let spill = outside == 0 ? "all inside the square" : "\(outside.formatted()) outside the square (they tile)"
+        return "\(tris.formatted()) triangles · \(spill)\nclick a part here or on the model · drag pans · scroll or pinch zooms · double-click fits"
     }
 
     // MARK: straight-on views, lights, backdrop, recent files
@@ -631,7 +721,7 @@ final class ModelDoc: ObservableObject {
          "pose": pose.rawValue, "canExplode": canExplode, "canDraw": canDraw, "spinning": spinning, "clips": clips.map { "\($0.name) \(String(format: "%.2f", $0.duration))s" },
          "clip": clip, "playing": playing, "time": clock, "speed": speed, "looping": looping, "tab": tab.rawValue, "facts": facts, "selected": selected ?? -1, "hidden": hiddenCount, "clay": clay, "panel": panel,
          "watching": watch != nil, "reloads": reloads, "toast": toast ?? "", "rows": rows.prefix(8).map { "\($0.name) \($0.triangles)" },
-         "view": view ?? "", "flat": flat, "light": Int((canvas.lightTurn * 180 / .pi).rounded()), "backdrop": backdrop.rawValue]
+         "view": view ?? "", "flat": flat, "light": Int((canvas.lightTurn * 180 / .pi).rounded()), "backdrop": backdrop.rawValue, "uv": uvOpen, "checker": checker, "uvParts": uvParts.count, "uvTriangles": uvParts.reduce(0) { $0 + $1.corners.count / 3 }, "uvImage": uvCanvas.image.map { "\($0.width)x\($0.height)" } ?? "", "uvTitle": uvTitle]
     }
 }
 
@@ -673,6 +763,7 @@ struct ModelViewerView: View {
                 }
                 if dropping { Rectangle().stroke(theme.accent, lineWidth: 3).allowsHitTesting(false) }
             }
+            if showing, doc.uvOpen { UVPane(doc: doc) }
             if showing, doc.panel { SidePanel(doc: doc) }
         }
         .frame(minWidth: 640, minHeight: 420)
@@ -731,6 +822,7 @@ struct ModelViewerView: View {
                 if doc.canExplode { ViewerChip(title: doc.explodeLabel, key: "X", on: doc.pose == .groups || doc.pose == .apart, plate: plate) { doc.explode() } }
                 ViewerChip(title: "Spin", key: "T", on: doc.spinning, plate: plate) { doc.spinning.toggle() }
                 ViewerChip(title: "Clay", key: "C", on: doc.clay, plate: plate) { doc.clay.toggle() }
+                ViewerChip(title: "UV", key: "V", on: doc.uvOpen, plate: plate) { doc.uvOpen.toggle() }
                 ViewerChip(title: "Wire", key: "Z", on: doc.wireframe, plate: plate) { doc.wireframe.toggle() }
                 ViewerChip(title: "Fit", key: "F", on: false, plate: plate) { doc.canvas.reframe() }
                 if !doc.clips.isEmpty { ViewerChip(title: "Anims", key: "N", on: doc.panel && doc.tab == .anims, plate: plate) { doc.showTab(.anims) } }
@@ -1068,7 +1160,8 @@ struct ViewerChip: View {
             }
             .fixedSize()
             .padding(.horizontal, 8).padding(.vertical, 5)
-            .background(on ? theme.accent : Color.black.opacity(plate))
+            // no reaching up under the title bar when a chip sits near the top of the window
+            .background(on ? theme.accent : Color.black.opacity(plate), ignoresSafeAreaEdges: [])
             .overlay(Rectangle().stroke(on ? theme.accent : Palette.ash.opacity(0.5)))
             .contentShape(Rectangle())
         }.buttonStyle(.plain)

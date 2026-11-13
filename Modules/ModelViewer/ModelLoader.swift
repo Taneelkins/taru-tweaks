@@ -205,16 +205,16 @@ enum ModelLoader {
         return true
     }
 
-    static func image(_ contents: Any?, usdz: URL) -> CGImage? {
+    static func image(_ contents: Any?, usdz: URL, maxSide: Int = 512) -> CGImage? {
         if let image = contents as? NSImage { return image.cgImage(forProposedRect: nil, context: nil, hints: nil) }
-        if let string = contents as? String { return image(URL(fileURLWithPath: string), usdz: usdz) }
+        if let string = contents as? String { return image(URL(fileURLWithPath: string), usdz: usdz, maxSide: maxSide) }
         guard let url = contents as? URL else {
             if let c = contents, CFGetTypeID(c as CFTypeRef) == CGImage.typeID { return (c as! CGImage) }
             return nil
         }
         let data = bytes(url)
         guard let data, let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        return CGImageSourceCreateThumbnailAtIndex(src, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 512] as CFDictionary)
+        return CGImageSourceCreateThumbnailAtIndex(src, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: maxSide] as CFDictionary)
     }
 
     static func isCutout(_ image: CGImage) -> Bool {
